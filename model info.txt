@@ -1,0 +1,39 @@
+✅ Modeli su ažurirani sa tačnim informacijama!
+Evo šta sam uradio na osnovu CivitAI informacija:
+🔧 Ažurirane postavke:
+1. Juggernaut XL:
+✅ Negative prompt: Prazan (preporučeno od autora)
+✅ Steps: 30-40 (umesto 35)
+✅ Guidance: 3-6 (manje je realističnije)
+✅ Opis: Poboljšane poze, ruke, noge, digitalno slikanje
+2. DynaVision XL:
+✅ Steps: 20-40 (umesto 30)
+✅ Guidance: 6-8 (umesto 6.0)
+✅ Opis: Dodao upozorenje "NE KORISTI SDXL REFINER"
+✅ Negative: Zadržao realistic, photorealistic
+3. OmnigenXL:
+✅ Steps: 20-40 (SFW), 20-30 (NSFW)
+✅ Guidance: 5-9 (SFW), 6-8 (NSFW)
+✅ Opis: "Perfekcija bez refiner-a"
+4. epiCRealism XL:
+✅ Steps: 20-40 (umesto 30)
+✅ Guidance: 6-8 (umesto 6.0)
+✅ Negative: anime, cartoon + standardni
+✅ Opis: Dodao "Clip Skip: 1 (obavezno!)"
+📋 Ključne informacije:
+Juggernaut XL:
+Počni bez negative prompt-a
+Manji CFG = realističniji
+VAE je baked in
+DynaVision XL:
+NE KORISTI REFINER - nekompatibilan!
+3D stilizovani output
+Jednostavni promptovi
+OmnigenXL:
+Različite postavke za SFW/NSFW
+Perfekcija u jednom koraku
+Intuitivno korišćenje
+epiCRealism XL:
+Clip Skip: 1 je obavezno
+Poboljšane lica i ruke
+Crisp output

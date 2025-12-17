@@ -1,0 +1,86 @@
+{
+  "ollama": {
+    "base_url": "http://localhost:11434",
+    "default_model": "llama3.2",
+    "auto_start": false,
+    "llm_params": {
+      "num_ctx": 4096,
+      "temperature": 0.7,
+      "top_p": 0.9,
+      "top_k": 40,
+      "repeat_penalty": 1.1,
+      "num_predict": -1
+    },
+    "conversation": {
+      "system_prompt": "You are a helpful AI assistant.",
+      "max_history_messages": 20,
+      "use_explicit_history": false
+    }
+  },
+  "models": {
+    "storage_path": null,
+    "auto_download": false
+  },
+  "ui": {
+    "theme": "dark",
+    "font_size": 14,
+    "compact_mode": false
+  },
+  "tts": {
+    "enabled": true,
+    "lang_code": "a",
+    "voice": "af_heart",
+    "speed": 1.0,
+    "auto_speak": false
+  },
+  "image_gen": {
+    "enabled": false,
+    "storage_path": null,
+    "model": "stabilityai/stable-diffusion-xl-base-1.0",
+    "lora_model": "None",
+    "lora_weight": 1.0,
+    "negative_prompt": "blurry, low quality, distorted, ugly, bad anatomy, duplicate, multiple, two, double, repeated, extra",
+    "width": 1024,
+    "height": 1024,
+    "steps": 50,
+    "guidance_scale": 7.5,
+    "auto_apply_presets": true
+  },
+  "model_presets": {
+    "stabilityai/stable-diffusion-xl-base-1.0": {
+      "name": "SDXL Base",
+      "width": 1024,
+      "height": 1024,
+      "steps": 50,
+      "guidance_scale": 7.5,
+      "negative_prompt": "blurry, low quality, distorted, ugly, bad anatomy, duplicate, multiple, two, double, repeated, extra",
+      "info_url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0",
+      "description": "Najbolji kvalitet, veća memorija (~6GB) - optimizovano",
+      "type": "xl"
+    },
+    "stabilityai/stable-diffusion-2-1-base": {
+      "name": "SD 2.1 Base",
+      "width": 512,
+      "height": 512,
+      "steps": 40,
+      "guidance_scale": 7.0,
+      "negative_prompt": "blurry, low quality, distorted, ugly, bad anatomy, duplicate, multiple, two, double, repeated, extra",
+      "info_url": "https://huggingface.co/stabilityai/stable-diffusion-2-1-base",
+      "description": "Brži, manje memorije (~5GB)",
+      "type": "base"
+    },
+    "runwayml/stable-diffusion-v1-5": {
+      "name": "SD 1.5",
+      "width": 512,
+      "height": 512,
+      "steps": 35,
+      "guidance_scale": 7.0,
+      "negative_prompt": "blurry, low quality, distorted, ugly, bad anatomy, duplicate, multiple, two, double, repeated, extra",
+      "info_url": "https://huggingface.co/runwayml/stable-diffusion-v1-5",
+      "description": "Najbrži, najmanje memorije (~4GB)",
+      "type": "base"
+    }
+  },
+  "first_run": true
+}
+

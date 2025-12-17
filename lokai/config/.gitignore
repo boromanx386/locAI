@@ -1,0 +1,4 @@
+# Ignore user-specific config files
+user_config.json
+*.json.bak
+
