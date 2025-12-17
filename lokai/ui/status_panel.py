@@ -175,7 +175,7 @@ class StatusPanel(QFrame):
         self.status_indicator.setStyleSheet(
             f"color: {color}; font-size: 16px; font-weight: bold;"
         )
-        self.status_label.setText("● Ollama Online")
+        self.status_label.setText("Ollama Online")
         self.status_label.setStyleSheet("font-weight: 500; color: #51CF66;")
         self.refresh_btn.setEnabled(True)
 
@@ -191,9 +191,9 @@ class StatusPanel(QFrame):
             f"color: {color}; font-size: 16px; font-weight: bold;"
         )
         if error:
-            self.status_label.setText(f"● Ollama Offline - {error}")
+            self.status_label.setText(f"Ollama Offline - {error}")
         else:
-            self.status_label.setText("● Ollama Offline")
+            self.status_label.setText("Ollama Offline")
         self.status_label.setStyleSheet("font-weight: 500; color: #EF5350;")
         self.model_combo.clear()
         self.model_combo.addItem("No models available")

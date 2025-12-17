@@ -19,8 +19,8 @@ import sys
 import json
 from datetime import datetime
 from pathlib import Path
-from PySide6.QtCore import Qt, QTimer, QThread, Signal, QEvent
-from PySide6.QtGui import QAction
+from PySide6.QtCore import Qt, QTimer, QThread, Signal, QEvent, QSize
+from PySide6.QtGui import QAction, QIcon, QPixmap, QPainter, QFont, QColor
 from lokai.core.config_manager import ConfigManager
 from lokai.ui.theme import Theme
 from lokai.ui.status_panel import StatusPanel
@@ -160,6 +160,24 @@ class MainWindow(QMainWindow):
             if hasattr(self.tts_engine, "speed"):
                 self.tts_engine.speed = speed
 
+            # Update voices in status panel based on language
+            if hasattr(self.status_panel, "update_voices_for_language"):
+                self.status_panel.update_voices_for_language(lang_code)
+
+            # Set voice from config after voices are loaded
+            if hasattr(self.status_panel, "tts_voice_combo"):
+                index = self.status_panel.tts_voice_combo.findText(voice)
+                if index >= 0:
+                    self.status_panel.tts_voice_combo.setCurrentIndex(index)
+                else:
+                    # If voice not found, select first available
+                    if self.status_panel.tts_voice_combo.count() > 0:
+                        self.status_panel.tts_voice_combo.setCurrentIndex(0)
+                        # Update config with first available voice
+                        first_voice = self.status_panel.tts_voice_combo.currentText()
+                        self.config_manager.set("tts.voice", first_voice)
+                        self.config_manager.save_config()
+
             print(f"TTS engine initialized: lang={lang_code}, voice={voice}")
 
         except Exception as e:
@@ -202,6 +220,9 @@ class MainWindow(QMainWindow):
         self.setGeometry(100, 100, 1200, 800)
         # Allow window to be collapsed to very small size
         self.setMinimumSize(100, 100)
+
+        # Set window icon
+        self.setWindowIcon(self._create_logo_icon())
 
         # Apply theme
         theme_name = self.config_manager.get("ui.theme", "dark")
@@ -259,6 +280,17 @@ class MainWindow(QMainWindow):
         # Initialize TTS engine
         self.tts_engine = None
         self._init_tts_engine()
+
+        # Ensure voices are loaded in status panel (in case TTS is disabled)
+        if hasattr(self.status_panel, "update_voices_for_language"):
+            lang_code = self.config_manager.get("tts.lang_code", "a")
+            self.status_panel.update_voices_for_language(lang_code)
+            # Set voice from config
+            voice = self.config_manager.get("tts.voice", "af_heart")
+            if hasattr(self.status_panel, "tts_voice_combo"):
+                index = self.status_panel.tts_voice_combo.findText(voice)
+                if index >= 0:
+                    self.status_panel.tts_voice_combo.setCurrentIndex(index)
 
         # Initialize global shortcuts for system-wide text selection
         self._init_global_shortcuts()
@@ -986,6 +1018,53 @@ class MainWindow(QMainWindow):
     def _on_image_progress(self, progress: int):
         """Handle image generation progress."""
         self.status_bar.showMessage(f"Generating image... {progress}%")
+
+    def _create_logo_icon(self) -> QIcon:
+        """Create application logo icon."""
+        # Create pixmap for icon (multiple sizes for better quality)
+        icon = QIcon()
+
+        # Create different sizes: 16x16, 32x32, 48x48, 64x64, 256x256
+        sizes = [16, 32, 48, 64, 256]
+
+        for size in sizes:
+            pixmap = QPixmap(size, size)
+            pixmap.fill(QColor(0, 0, 0, 0))  # Transparent background
+
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+            # Draw background circle with gradient-like effect
+            # Use primary color from theme
+            primary_color = QColor(74, 158, 255)  # #4A9EFF
+            painter.setBrush(primary_color)
+            painter.setPen(Qt.PenStyle.NoPen)
+
+            # Draw circle with padding
+            padding = size // 8
+            painter.drawEllipse(
+                padding, padding, size - 2 * padding, size - 2 * padding
+            )
+
+            # Draw "AI" text in white
+            painter.setPen(QColor(255, 255, 255))
+            font = QFont()
+            font.setBold(True)
+            # Scale font size based on icon size
+            font_size = max(8, size // 3)
+            font.setPixelSize(font_size)
+            painter.setFont(font)
+
+            # Center text
+            text = "AI"
+            painter.drawText(0, 0, size, size, Qt.AlignmentFlag.AlignCenter, text)
+
+            painter.end()
+
+            # Add pixmap to icon
+            icon.addPixmap(pixmap)
+
+        return icon
 
     def _set_dark_title_bar(self):
         """Set dark title bar for Windows 10/11."""

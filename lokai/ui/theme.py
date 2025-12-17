@@ -90,7 +90,7 @@ class Theme:
             background: {colors["primary"]};
             color: white;
             border: none;
-            border-radius: 6px;
+            border-radius: 10px;
             padding: 8px 16px;
             font-weight: 500;
             font-size: 14px;
@@ -117,7 +117,7 @@ class Theme:
             background: {colors["surface"]};
             color: {colors["text_primary"]};
             border: 1px solid {colors["border"]};
-            border-radius: 6px;
+            border-radius: 10px;
             padding: 8px 12px;
             font-size: 14px;
         }}
@@ -130,7 +130,7 @@ class Theme:
             background: {colors["surface"]};
             color: {colors["text_primary"]};
             border: 1px solid {colors["border"]};
-            border-radius: 6px;
+            border-radius: 10px;
             padding: 6px 12px;
             font-size: 14px;
         }}
@@ -161,7 +161,7 @@ class Theme:
         }}
         QScrollBar::handle:vertical {{
             background: {colors["border"]};
-            border-radius: 6px;
+            border-radius: 8px;
             min-height: 20px;
         }}
         QScrollBar::handle:vertical:hover {{
@@ -186,13 +186,13 @@ class Theme:
         QFrame {{
             background: {colors["surface"]};
             border: 1px solid {colors["border"]};
-            border-radius: 8px;
+            border-radius: 12px;
         }}
         
         /* Group Box */
         QGroupBox {{
             border: 1px solid {colors["border"]};
-            border-radius: 6px;
+            border-radius: 10px;
             margin-top: 12px;
             padding-top: 12px;
             font-weight: 500;

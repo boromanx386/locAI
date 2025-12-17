@@ -6,7 +6,7 @@ locAI is a commercial desktop AI assistant that combines Large Language Models (
 
 - **LLM Chat**: Chat with AI models via Ollama (llama3.2, mistral, codellama, and more)
 - **Image Generation**: Generate images using Stable Diffusion (optional, requires additional dependencies)
-- **Text-to-Speech**: Natural voice synthesis using Edge TTS
+- **Text-to-Speech**: Natural voice synthesis using Kokoro-82M TTS
 - **Modern GUI**: Eye-friendly interface with customizable themes
 - **Easy Setup**: First-run wizard guides you through configuration
 - **Flexible Configuration**: Customize model storage locations and settings
@@ -22,6 +22,10 @@ locAI is a commercial desktop AI assistant that combines Large Language Models (
 - **PyTorch**: For Stable Diffusion models
 - **CUDA**: For GPU acceleration (recommended)
 - **diffusers**: Stable Diffusion library
+
+### TTS Requirements
+- **kokoro**: Kokoro-82M TTS engine
+- **soundfile**: Audio file handling for TTS
 
 ## Installation
 
@@ -50,15 +54,12 @@ This downloads the Llama 3.2 model (approximately 2GB).
 
 ### 3. Install locAI
 
-**Minimal installation (LLM + TTS only):**
-```bash
-pip install -r requirements-minimal.txt
-```
-
 **Full installation (includes Image Generation):**
 ```bash
 pip install -r requirements.txt
 ```
+
+**Note:** TTS requires `kokoro` and `soundfile` packages which are included in requirements.txt
 
 ### 4. Run locAI
 
@@ -92,9 +93,12 @@ Access settings via **File > Preferences** or press `Ctrl+,`
 
 ### Text-to-Speech
 
-TTS is enabled by default. To use:
+TTS uses Kokoro-82M for high-quality voice synthesis. To use:
+- Select language and voice in Settings > TTS
 - Responses are automatically spoken (if auto-speak is enabled)
-- Or use the TTS controls in the chat interface
+- Or use the TTS controls (play/pause/stop) in the status panel
+- Right-click selected text in chat for "Read with TTS" option
+- Use global shortcut F9 to read any selected text in Windows
 
 ## Configuration
 
@@ -141,6 +145,14 @@ locAI automatically sets Hugging Face cache environment variables based on your 
 2. Check that model storage path has sufficient space (models are several GB)
 3. Verify CUDA is available for GPU acceleration (optional but recommended)
 
+### TTS Not Working
+
+1. Ensure `kokoro` and `soundfile` are installed: `pip install kokoro soundfile`
+2. Voice files are automatically downloaded to Hugging Face cache on first use
+3. Default cache location: `~/.cache/huggingface/hub/models--hexgrad--Kokoro-82M/`
+4. If voices are missing, manually download them from [Hugging Face](https://huggingface.co/hexgrad/Kokoro-82M/tree/main/voices) and place them in the cache directory
+5. Check Settings > TTS to verify language and voice selection
+
 ## Project Structure
 
 ```
@@ -186,6 +198,6 @@ For issues, questions, or contributions, please [add your contact/support inform
 
 - **Ollama**: [ollama.com](https://ollama.com) - Local LLM runtime
 - **Stable Diffusion**: [stability.ai](https://stability.ai) - Image generation
-- **Edge TTS**: Microsoft Edge TTS - Text-to-speech
+- **Kokoro-82M**: [hexgrad/Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) - Text-to-speech engine
 - **PySide6**: Qt for Python - GUI framework
 
