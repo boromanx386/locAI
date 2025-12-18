@@ -147,7 +147,7 @@ class TTSEngine:
     
     def clean_text(self, text: str) -> str:
         """
-        Clean text for TTS (remove special characters).
+        Clean text for TTS (remove special characters, but preserve newlines for pauses).
         
         Args:
             text: Input text
@@ -163,10 +163,18 @@ class TTSEngine:
         # Remove URLs
         text = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', '', text)
         
-        # Remove extra whitespace
-        text = ' '.join(text.split())
+        # Preserve newlines but clean up multiple spaces
+        # Split by newlines first to preserve them
+        lines = text.split('\n')
+        cleaned_lines = []
+        for line in lines:
+            # Clean up extra whitespace within each line
+            cleaned_line = ' '.join(line.split())
+            if cleaned_line:  # Only add non-empty lines
+                cleaned_lines.append(cleaned_line)
         
-        return text.strip()
+        # Join with newlines preserved (this will create pauses)
+        return '\n'.join(cleaned_lines)
     
     def split_text_into_chunks(self, text: str, max_size: int = 500) -> list:
         """
@@ -214,79 +222,91 @@ class TTSEngine:
         self.should_stop = False
         
         try:
-            # Clean text
+            # Clean text (now preserves newlines)
             clean_text = self.clean_text(text)
             if not clean_text:
                 return
             
-            # Split into chunks (Kokoro can handle longer text, but split for better UX)
-            chunks = self.split_text_into_chunks(clean_text, max_size=500)
+            # Split by newlines to add pauses between paragraphs
+            paragraphs = clean_text.split('\n')
             
-            for i, chunk in enumerate(chunks):
-                if not chunk.strip() or self.should_stop:
+            for para_idx, paragraph in enumerate(paragraphs):
+                if not paragraph.strip() or self.should_stop:
                     continue
                 
-                # Generate TTS with Kokoro
-                try:
-                    generator = self.pipeline(
-                        chunk,
-                        voice=self.voice,
-                        speed=self.speed,
-                        split_pattern=r'\n+'
-                    )
-                except Exception as voice_error:
-                    # If voice is not available, try default voice
-                    if "404" in str(voice_error) or "not found" in str(voice_error).lower():
-                        print(f"Voice {self.voice} not available, trying default voice 'af_heart'")
-                        try:
-                            generator = self.pipeline(
-                                chunk,
-                                voice="af_heart",  # Fallback to default
-                                speed=self.speed,
-                                split_pattern=r'\n+'
-                            )
-                        except Exception as fallback_error:
-                            print(f"TTS voice error: {fallback_error}")
-                            continue
-                    else:
-                        print(f"TTS error: {voice_error}")
+                # Add pause before new paragraph (except first)
+                if para_idx > 0:
+                    # Small pause between paragraphs (0.3 seconds)
+                    await asyncio.sleep(0.3)
+                
+                # Split into chunks if paragraph is too long
+                chunks = self.split_text_into_chunks(paragraph, max_size=500)
+                
+                for i, chunk in enumerate(chunks):
+                    if not chunk.strip() or self.should_stop:
                         continue
-                
-                # Collect all audio chunks
-                audio_chunks = []
-                for gs, ps, audio in generator:
-                    if self.should_stop:
-                        break
-                    audio_chunks.append(audio)
-                
-                if not audio_chunks or self.should_stop:
-                    continue
-                
-                # Concatenate audio chunks
-                import numpy as np
-                full_audio = np.concatenate(audio_chunks)
-                
-                # Save to temporary file
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
-                    tmp_path = tmp_file.name
-                
-                # Save as WAV (24kHz sample rate for Kokoro)
-                sf.write(tmp_path, full_audio, 24000)
-                
-                # Play audio
-                if not self.should_stop:
-                    pygame.mixer.music.load(tmp_path)
-                    pygame.mixer.music.play()
                     
-                    # Wait for playback to finish
-                    while pygame.mixer.music.get_busy() and not self.should_stop:
-                        await asyncio.sleep(0.1)
-                
-                # Clean up
-                try:
-                    os.unlink(tmp_path)
-                except:
-                    pass
+                    # Generate TTS with Kokoro
+                    try:
+                        generator = self.pipeline(
+                            chunk,
+                            voice=self.voice,
+                            speed=self.speed,
+                            split_pattern=r'\n+'
+                        )
+                    except Exception as voice_error:
+                        # If voice is not available, try default voice
+                        if "404" in str(voice_error) or "not found" in str(voice_error).lower():
+                            print(f"Voice {self.voice} not available, trying default voice 'af_heart'")
+                            try:
+                                generator = self.pipeline(
+                                    chunk,
+                                    voice="af_heart",  # Fallback to default
+                                    speed=self.speed,
+                                    split_pattern=r'\n+'
+                                )
+                            except Exception as fallback_error:
+                                print(f"TTS voice error: {fallback_error}")
+                                continue
+                        else:
+                            print(f"TTS error: {voice_error}")
+                            continue
+                    
+                    # Collect all audio chunks
+                    audio_chunks = []
+                    for gs, ps, audio in generator:
+                        if self.should_stop:
+                            break
+                        audio_chunks.append(audio)
+                    
+                    if not audio_chunks or self.should_stop:
+                        continue
+                    
+                    # Concatenate audio chunks
+                    import numpy as np
+                    full_audio = np.concatenate(audio_chunks)
+                    
+                    # Save to temporary file
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
+                        tmp_path = tmp_file.name
+                    
+                    # Save as WAV (24kHz sample rate for Kokoro)
+                    sf.write(tmp_path, full_audio, 24000)
+                    
+                    # Play audio
+                    if not self.should_stop:
+                        pygame.mixer.music.load(tmp_path)
+                        pygame.mixer.music.play()
+                        
+                        # Wait for playback to finish
+                        while pygame.mixer.music.get_busy() and not self.should_stop:
+                            await asyncio.sleep(0.1)
+                    
+                    # Clean up
+                    try:
+                        os.unlink(tmp_path)
+                    except:
+                        pass
                 
         except Exception as e:
             print(f"TTS error: {e}")

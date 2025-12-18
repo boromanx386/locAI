@@ -27,6 +27,7 @@ class StatusPanel(QFrame):
     tts_stop_clicked = Signal()
     tts_voice_changed = Signal(str)
     refresh_clicked = Signal()  # Emitted when refresh button is clicked
+    stop_clicked = Signal()  # Emitted when stop button is clicked
 
     def __init__(self, detector: OllamaDetector, client: OllamaClient):
         """
@@ -85,9 +86,47 @@ class StatusPanel(QFrame):
         self.refresh_btn.clicked.connect(self._on_refresh_clicked)
         layout.addWidget(self.refresh_btn)
 
+        # Stop button (icon only, smaller)
+        self.stop_btn = QPushButton()
+        MaterialIcons.apply_to_button(
+            self.stop_btn, MaterialIcons.STOP_SVG, size=18, keep_text=False
+        )
+        self.stop_btn.setToolTip("Stop all operations (Ollama & Image Generation)")
+        self.stop_btn.setMaximumWidth(32)
+        self.stop_btn.setMaximumHeight(32)
+        self.stop_btn.clicked.connect(self._on_stop_clicked)
+        layout.addWidget(self.stop_btn)
+
         layout.addStretch()  # Push TTS controls to the right
 
-        # TTS Controls
+        # TTS Voice icon
+        voice_icon_label = QLabel()
+        MaterialIcons.apply_to_label(
+            voice_icon_label, MaterialIcons.MICROPHONE_SVG, size=20
+        )
+        voice_icon_label.setToolTip("Voice")
+        layout.addWidget(voice_icon_label)
+
+        # TTS Voice dropdown
+        self.tts_voice_combo = QComboBox()
+        self.tts_voice_combo.setMinimumWidth(0)  # Allow shrinking
+        self.tts_voice_combo.setMaximumWidth(150)
+        # Will be populated based on language from config
+        # Default voices for American English (only confirmed available)
+        self.tts_voice_combo.addItems(
+            [
+                "af_heart",
+                "af_bella",
+                "af_sam",
+                "af_sky",
+                "af_spring",
+            ]
+        )
+        self.tts_voice_combo.setCurrentText("af_heart")
+        self.tts_voice_combo.currentTextChanged.connect(self.on_tts_voice_changed)
+        layout.addWidget(self.tts_voice_combo)
+
+        # TTS Controls (after voice dropdown)
         # TTS Play button
         self.tts_play_btn = QPushButton()
         MaterialIcons.apply_to_button(
@@ -122,33 +161,6 @@ class StatusPanel(QFrame):
         self.tts_stop_btn.setEnabled(False)
         self.tts_stop_btn.clicked.connect(self.on_tts_stop)
         layout.addWidget(self.tts_stop_btn)
-
-        # TTS Voice icon
-        voice_icon_label = QLabel()
-        MaterialIcons.apply_to_label(
-            voice_icon_label, MaterialIcons.MICROPHONE_SVG, size=20
-        )
-        voice_icon_label.setToolTip("Voice")
-        layout.addWidget(voice_icon_label)
-
-        # TTS Voice dropdown
-        self.tts_voice_combo = QComboBox()
-        self.tts_voice_combo.setMinimumWidth(0)  # Allow shrinking
-        self.tts_voice_combo.setMaximumWidth(150)
-        # Will be populated based on language from config
-        # Default voices for American English (only confirmed available)
-        self.tts_voice_combo.addItems(
-            [
-                "af_heart",
-                "af_bella",
-                "af_sam",
-                "af_sky",
-                "af_spring",
-            ]
-        )
-        self.tts_voice_combo.setCurrentText("af_heart")
-        self.tts_voice_combo.currentTextChanged.connect(self.on_tts_voice_changed)
-        layout.addWidget(self.tts_voice_combo)
 
         self.setLayout(layout)
         self.setFrameStyle(QFrame.Shape.StyledPanel)
@@ -204,6 +216,10 @@ class StatusPanel(QFrame):
         """Handle refresh button click - emit signal and refresh models."""
         self.refresh_clicked.emit()
         self.refresh_models()
+
+    def _on_stop_clicked(self):
+        """Handle stop button click - emit signal."""
+        self.stop_clicked.emit()
 
     def refresh_models(self):
         """Refresh the list of available models (non-blocking)."""

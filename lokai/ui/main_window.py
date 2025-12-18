@@ -67,7 +67,10 @@ class MainWindow(QMainWindow):
         # Cache LLM parameters to avoid repeated config reads
         self._llm_params_cache = None
         self._conversation_settings_cache = None
-        self._cache_config_values()
+        # Get default model and cache its settings
+        default_model = config_manager.get("ollama.default_model", "llama3.2")
+        self._current_model = default_model
+        self._cache_config_values(default_model)
 
         # Setup UI
         self.init_ui()
@@ -80,31 +83,69 @@ class MainWindow(QMainWindow):
         self._last_status_check = None
         self._status_check_interval = 30000  # Only check if 30+ seconds passed
 
-    def _cache_config_values(self):
-        """Cache frequently accessed config values to avoid repeated file reads."""
-        self._llm_params_cache = {
-            "num_ctx": self.config_manager.get("ollama.llm_params.num_ctx", 4096),
-            "temperature": self.config_manager.get(
-                "ollama.llm_params.temperature", 0.7
-            ),
-            "top_p": self.config_manager.get("ollama.llm_params.top_p", 0.9),
-            "top_k": self.config_manager.get("ollama.llm_params.top_k", 40),
-            "repeat_penalty": self.config_manager.get(
-                "ollama.llm_params.repeat_penalty", 1.1
-            ),
-            "num_predict": self.config_manager.get("ollama.llm_params.num_predict", -1),
-        }
-        self._conversation_settings_cache = {
-            "use_explicit_history": self.config_manager.get(
-                "ollama.conversation.use_explicit_history", False
-            ),
-            "system_prompt": self.config_manager.get(
-                "ollama.conversation.system_prompt", "You are a helpful AI assistant."
-            ),
-            "max_history": self.config_manager.get(
-                "ollama.conversation.max_history_messages", 20
-            ),
-        }
+    def _cache_config_values(self, model_name: str = None):
+        """
+        Cache frequently accessed config values to avoid repeated file reads.
+        Uses model-specific settings if available, otherwise uses global defaults.
+        
+        Args:
+            model_name: Optional model name to load model-specific settings
+        """
+        # Get model-specific settings if model is provided
+        model_settings = None
+        if model_name:
+            model_settings = self.config_manager.get_llm_model_setting(model_name)
+        
+        # Use model-specific settings or fall back to global defaults
+        if model_settings and "llm_params" in model_settings:
+            llm_params = model_settings["llm_params"]
+            self._llm_params_cache = {
+                "num_ctx": llm_params.get("num_ctx", self.config_manager.get("ollama.llm_params.num_ctx", 4096)),
+                "temperature": llm_params.get("temperature", self.config_manager.get("ollama.llm_params.temperature", 0.7)),
+                "top_p": llm_params.get("top_p", self.config_manager.get("ollama.llm_params.top_p", 0.9)),
+                "top_k": llm_params.get("top_k", self.config_manager.get("ollama.llm_params.top_k", 40)),
+                "repeat_penalty": llm_params.get("repeat_penalty", self.config_manager.get("ollama.llm_params.repeat_penalty", 1.1)),
+                "num_predict": llm_params.get("num_predict", self.config_manager.get("ollama.llm_params.num_predict", -1)),
+            }
+        else:
+            # Use global defaults
+            self._llm_params_cache = {
+                "num_ctx": self.config_manager.get("ollama.llm_params.num_ctx", 4096),
+                "temperature": self.config_manager.get(
+                    "ollama.llm_params.temperature", 0.7
+                ),
+                "top_p": self.config_manager.get("ollama.llm_params.top_p", 0.9),
+                "top_k": self.config_manager.get("ollama.llm_params.top_k", 40),
+                "repeat_penalty": self.config_manager.get(
+                    "ollama.llm_params.repeat_penalty", 1.1
+                ),
+                "num_predict": self.config_manager.get("ollama.llm_params.num_predict", -1),
+            }
+        
+        # Conversation settings
+        if model_settings and "conversation" in model_settings:
+            conv_settings = model_settings["conversation"]
+            self._conversation_settings_cache = {
+                "use_explicit_history": conv_settings.get("use_explicit_history", 
+                    self.config_manager.get("ollama.conversation.use_explicit_history", False)),
+                "system_prompt": conv_settings.get("system_prompt",
+                    self.config_manager.get("ollama.conversation.system_prompt", "You are a helpful AI assistant.")),
+                "max_history": conv_settings.get("max_history_messages",
+                    self.config_manager.get("ollama.conversation.max_history_messages", 20)),
+            }
+        else:
+            # Use global defaults
+            self._conversation_settings_cache = {
+                "use_explicit_history": self.config_manager.get(
+                    "ollama.conversation.use_explicit_history", False
+                ),
+                "system_prompt": self.config_manager.get(
+                    "ollama.conversation.system_prompt", "You are a helpful AI assistant."
+                ),
+                "max_history": self.config_manager.get(
+                    "ollama.conversation.max_history_messages", 20
+                ),
+            }
 
     def _init_image_generator(self):
         """Initialize image generator if enabled and path is set."""
@@ -261,6 +302,8 @@ class MainWindow(QMainWindow):
         self.status_panel.refresh_clicked.connect(
             lambda: self.check_ollama_status(force=True)
         )
+        # Connect stop button
+        self.status_panel.stop_clicked.connect(self.on_stop_all_operations)
         # Language change is handled through Settings only
         main_layout.addWidget(self.status_panel)
 
@@ -416,7 +459,75 @@ class MainWindow(QMainWindow):
         """Handle model selection."""
         self.config_manager.set("ollama.default_model", model_name)
         self.config_manager.save_config()
-        self.status_bar.showMessage(f"Selected model: {model_name}")
+        
+        # Update current model and reload settings for this model
+        self._current_model = model_name
+        self._cache_config_values(model_name)
+        
+        self.status_bar.showMessage(f"Selected model: {model_name} - Settings loaded")
+
+    def on_stop_all_operations(self):
+        """Stop all running operations (Ollama and Image Generation)."""
+        stopped_anything = False
+        
+        # Stop Ollama worker if running
+        if hasattr(self, "current_worker") and self.current_worker is not None:
+            if self.current_worker.isRunning():
+                print("Stopping Ollama worker...")
+                self.current_worker.terminate()
+                self.current_worker.wait(1000)  # Wait max 1 second
+                self.current_worker = None
+                stopped_anything = True
+                
+                # Remove incomplete AI bubble if exists
+                if hasattr(self.chat_widget, "current_ai_bubble") and self.chat_widget.current_ai_bubble is not None:
+                    try:
+                        self.chat_widget.current_ai_bubble.setParent(None)
+                        self.chat_widget.current_ai_bubble.deleteLater()
+                        self.chat_widget.current_ai_bubble = None
+                    except:
+                        pass
+        
+        # Stop Image Generation worker if running
+        if hasattr(self, "current_image_worker") and self.current_image_worker is not None:
+            if self.current_image_worker.isRunning():
+                print("Stopping Image Generation worker...")
+                self.current_image_worker.terminate()
+                self.current_image_worker.wait(1000)  # Wait max 1 second
+                self.current_image_worker = None
+                stopped_anything = True
+        
+        # Always reset context and conversation state when stopping
+        # This ensures next prompt starts fresh
+        if stopped_anything:
+            print("Resetting conversation context...")
+            # Clear context to force fresh start
+            self.current_context = None
+            # Remove last incomplete message from history if exists
+            if self.conversation_history and self.conversation_history[-1].get("role") == "user":
+                # Remove last user message if assistant didn't respond
+                self.conversation_history.pop()
+            
+            # Reset model tracking
+            self.last_used_model = None
+            self.last_was_vision = False
+            
+            print("Unloading all models...")
+            if hasattr(self, "ollama_client") and self.ollama_client:
+                try:
+                    self.ollama_client.unload_all_models_silent()
+                except Exception as e:
+                    print(f"Error unloading Ollama models: {e}")
+            
+            if hasattr(self, "image_generator") and self.image_generator:
+                try:
+                    self.image_generator.unload_model()
+                except Exception as e:
+                    print(f"Error unloading image generator: {e}")
+            
+            self.status_bar.showMessage("All operations stopped, context reset, and models unloaded")
+        else:
+            self.status_bar.showMessage("No operations to stop")
 
     def on_message_sent(self, message: str, image_path: str = ""):
         """Handle message sent from chat widget."""
@@ -747,8 +858,13 @@ class MainWindow(QMainWindow):
 
                 QTimer.singleShot(100, lambda: self._update_status_voice(voice))
 
-            # Refresh cached config values
-            self._cache_config_values()
+            # Refresh cached config values for current model
+            if self._current_model:
+                self._cache_config_values(self._current_model)
+            else:
+                default_model = self.config_manager.get("ollama.default_model", "llama3.2")
+                self._current_model = default_model
+                self._cache_config_values(default_model)
 
             self.status_bar.showMessage("Settings saved")
 

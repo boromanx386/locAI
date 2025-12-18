@@ -44,6 +44,7 @@ desktop.ini
 *.zip
 temp_recording.wav
 conversation_*.txt
+conversations/
 archive/
 *.png
 *.jpg

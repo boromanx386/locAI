@@ -156,11 +156,11 @@ class SettingsDialog(QDialog):
 
         # Context Window
         self.context_window_spin = QSpinBox()
-        self.context_window_spin.setRange(512, 32768)
+        self.context_window_spin.setRange(512, 200000)  # Support up to 200k context
         self.context_window_spin.setValue(4096)
-        self.context_window_spin.setSingleStep(512)
+        self.context_window_spin.setSingleStep(1024)  # Larger step for big models
         self.context_window_spin.setToolTip(
-            "Maximum context size in tokens (512-32768)"
+            "Maximum context size in tokens (512-200000). Higher values require more memory."
         )
         llm_params_layout.addRow("Context Window:", self.context_window_spin)
 
@@ -1153,41 +1153,66 @@ class SettingsDialog(QDialog):
         auto_start = self.config_manager.get("ollama.auto_start", False)
         self.auto_start_check.setChecked(auto_start)
 
-        # LLM Parameters
-        num_ctx = self.config_manager.get("ollama.llm_params.num_ctx", 4096)
+        # Get current model from parent (MainWindow) if available
+        current_model = None
+        if self.parent() and hasattr(self.parent(), '_current_model'):
+            current_model = self.parent()._current_model
+        
+        # If no current model, use default model
+        if not current_model:
+            current_model = self.config_manager.get("ollama.default_model", "llama3.2")
+        
+        # Try to load model-specific settings first
+        model_settings = self.config_manager.get_llm_model_setting(current_model)
+        
+        # LLM Parameters - use model-specific or fall back to global defaults
+        if model_settings and "llm_params" in model_settings:
+            llm_params = model_settings["llm_params"]
+            num_ctx = llm_params.get("num_ctx", self.config_manager.get("ollama.llm_params.num_ctx", 4096))
+            temperature = llm_params.get("temperature", self.config_manager.get("ollama.llm_params.temperature", 0.7))
+            top_p = llm_params.get("top_p", self.config_manager.get("ollama.llm_params.top_p", 0.9))
+            top_k = llm_params.get("top_k", self.config_manager.get("ollama.llm_params.top_k", 40))
+            repeat_penalty = llm_params.get("repeat_penalty", self.config_manager.get("ollama.llm_params.repeat_penalty", 1.1))
+            num_predict = llm_params.get("num_predict", self.config_manager.get("ollama.llm_params.num_predict", -1))
+        else:
+            # Use global defaults
+            num_ctx = self.config_manager.get("ollama.llm_params.num_ctx", 4096)
+            temperature = self.config_manager.get("ollama.llm_params.temperature", 0.7)
+            top_p = self.config_manager.get("ollama.llm_params.top_p", 0.9)
+            top_k = self.config_manager.get("ollama.llm_params.top_k", 40)
+            repeat_penalty = self.config_manager.get("ollama.llm_params.repeat_penalty", 1.1)
+            num_predict = self.config_manager.get("ollama.llm_params.num_predict", -1)
+        
         self.context_window_spin.setValue(num_ctx)
-
-        temperature = self.config_manager.get("ollama.llm_params.temperature", 0.7)
         self.temperature_spin.setValue(temperature)
-
-        top_p = self.config_manager.get("ollama.llm_params.top_p", 0.9)
         self.top_p_spin.setValue(top_p)
-
-        top_k = self.config_manager.get("ollama.llm_params.top_k", 40)
         self.top_k_spin.setValue(top_k)
-
-        repeat_penalty = self.config_manager.get(
-            "ollama.llm_params.repeat_penalty", 1.1
-        )
         self.repeat_penalty_spin.setValue(repeat_penalty)
-
-        num_predict = self.config_manager.get("ollama.llm_params.num_predict", -1)
         self.max_tokens_spin.setValue(num_predict)
 
-        # Conversation Settings
-        system_prompt = self.config_manager.get(
-            "ollama.conversation.system_prompt", "You are a helpful AI assistant."
-        )
+        # Conversation Settings - use model-specific or fall back to global defaults
+        if model_settings and "conversation" in model_settings:
+            conv_settings = model_settings["conversation"]
+            system_prompt = conv_settings.get("system_prompt", 
+                self.config_manager.get("ollama.conversation.system_prompt", "You are a helpful AI assistant."))
+            max_history = conv_settings.get("max_history_messages",
+                self.config_manager.get("ollama.conversation.max_history_messages", 20))
+            use_explicit = conv_settings.get("use_explicit_history",
+                self.config_manager.get("ollama.conversation.use_explicit_history", False))
+        else:
+            # Use global defaults
+            system_prompt = self.config_manager.get(
+                "ollama.conversation.system_prompt", "You are a helpful AI assistant."
+            )
+            max_history = self.config_manager.get(
+                "ollama.conversation.max_history_messages", 20
+            )
+            use_explicit = self.config_manager.get(
+                "ollama.conversation.use_explicit_history", False
+            )
+        
         self.system_prompt_edit.setPlainText(system_prompt)
-
-        max_history = self.config_manager.get(
-            "ollama.conversation.max_history_messages", 20
-        )
         self.max_history_spin.setValue(max_history)
-
-        use_explicit = self.config_manager.get(
-            "ollama.conversation.use_explicit_history", False
-        )
         self.explicit_history_check.setChecked(use_explicit)
 
         # Models
@@ -1304,7 +1329,40 @@ class SettingsDialog(QDialog):
         self.config_manager.set("ollama.default_model", self.default_model_edit.text())
         self.config_manager.set("ollama.auto_start", self.auto_start_check.isChecked())
 
-        # LLM Parameters
+        # Get current model from parent (MainWindow) if available
+        current_model = None
+        if self.parent() and hasattr(self.parent(), '_current_model'):
+            current_model = self.parent()._current_model
+        
+        # If no current model, use default model
+        if not current_model:
+            current_model = self.config_manager.get("ollama.default_model", "llama3.2")
+        
+        # Save LLM Parameters - save to model-specific settings if model is set
+        llm_params = {
+            "num_ctx": self.context_window_spin.value(),
+            "temperature": self.temperature_spin.value(),
+            "top_p": self.top_p_spin.value(),
+            "top_k": self.top_k_spin.value(),
+            "repeat_penalty": self.repeat_penalty_spin.value(),
+            "num_predict": self.max_tokens_spin.value(),
+        }
+        
+        # Conversation Settings
+        conversation_settings = {
+            "system_prompt": self.system_prompt_edit.toPlainText(),
+            "max_history_messages": self.max_history_spin.value(),
+            "use_explicit_history": self.explicit_history_check.isChecked(),
+        }
+        
+        # Save to model-specific settings
+        model_settings = {
+            "llm_params": llm_params,
+            "conversation": conversation_settings,
+        }
+        self.config_manager.set_llm_model_setting(current_model, model_settings)
+        
+        # Also save as global defaults (for backward compatibility and new models)
         self.config_manager.set(
             "ollama.llm_params.num_ctx", self.context_window_spin.value()
         )
@@ -1319,8 +1377,6 @@ class SettingsDialog(QDialog):
         self.config_manager.set(
             "ollama.llm_params.num_predict", self.max_tokens_spin.value()
         )
-
-        # Conversation Settings
         self.config_manager.set(
             "ollama.conversation.system_prompt", self.system_prompt_edit.toPlainText()
         )
