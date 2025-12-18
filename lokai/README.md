@@ -10,6 +10,7 @@ locAI is a commercial desktop AI assistant that combines Large Language Models (
 - **Modern GUI**: Eye-friendly interface with customizable themes
 - **Easy Setup**: First-run wizard guides you through configuration
 - **Flexible Configuration**: Customize model storage locations and settings
+- **Optimized GPU Memory Management**: Advanced memory management allows running on GPUs with as little as 8GB VRAM, with automatic model unloading and aggressive memory cleanup
 
 ## Requirements
 
@@ -22,6 +23,7 @@ locAI is a commercial desktop AI assistant that combines Large Language Models (
 - **PyTorch**: For Stable Diffusion models
 - **CUDA**: For GPU acceleration (recommended)
 - **diffusers**: Stable Diffusion library
+- **GPU**: NVIDIA GPU with 8GB+ VRAM recommended (optimized to work efficiently with 8GB)
 
 ### TTS Requirements
 - **kokoro**: Kokoro-82M TTS engine
@@ -119,6 +121,18 @@ locAI automatically sets Hugging Face cache environment variables based on your 
 - `HF_HUB_CACHE`
 - `DIFFUSERS_CACHE`
 
+## GPU Memory Optimization
+
+locAI is specifically optimized to run efficiently on GPUs with limited VRAM, including systems with only 8GB of GPU memory. Key optimizations include:
+
+- **Automatic Model Unloading**: Models are automatically unloaded from GPU memory after use (LLM, Vision, Image Generation, and TTS)
+- **Aggressive Memory Cleanup**: Multiple cache clearing passes and IPC resource collection ensure maximum memory is freed
+- **Smart Memory Management**: Models are unloaded when switching between different model types or when switching models
+- **Sequential CPU Offload**: Image generation models use sequential CPU offload to minimize VRAM usage
+- **Memory Cleanup on Exit**: All GPU memory is properly released when the application closes
+
+This allows you to run powerful local AI models (including vision models and image generation) even on mid-range GPUs like the RTX 2080 with 8GB VRAM.
+
 ## Troubleshooting
 
 ### Ollama Not Detected
@@ -144,6 +158,20 @@ locAI automatically sets Hugging Face cache environment variables based on your 
 1. Ensure full requirements are installed: `pip install -r requirements.txt`
 2. Check that model storage path has sufficient space (models are several GB)
 3. Verify CUDA is available for GPU acceleration (optional but recommended)
+4. If you encounter "CUDA out of memory" errors, the application will automatically unload models to free memory
+
+### GPU Memory Issues
+
+If GPU memory remains high after closing the application:
+
+1. Run the GPU memory cleaner utility: `python lokai/utils/clear_gpu_memory.py`
+2. Restart your GPU driver (Device Manager > Display adapters > Disable/Enable)
+3. Restart your computer if memory persists
+
+The application is optimized for 8GB+ GPUs, but if you have less VRAM, you may need to:
+- Use smaller models
+- Unload models manually between tasks
+- Use CPU mode for some operations
 
 ### TTS Not Working
 

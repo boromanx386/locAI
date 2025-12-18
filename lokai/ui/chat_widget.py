@@ -419,7 +419,7 @@ class ChatWidget(QWidget):
         layout.addWidget(scroll_area, stretch=1)
 
         # Input area
-        input_frame = QFrame()
+        self.input_frame = QFrame()
         input_layout = QHBoxLayout()
         input_layout.setContentsMargins(12, 8, 12, 8)
         input_layout.setSpacing(8)
@@ -475,8 +475,11 @@ class ChatWidget(QWidget):
         self.status_indicator.setVisible(False)
         input_layout.addWidget(self.status_indicator)
 
-        input_frame.setLayout(input_layout)
-        layout.addWidget(input_frame)
+        self.input_frame.setLayout(input_layout)
+        layout.addWidget(self.input_frame)
+        
+        # Set initial style for chat mode
+        self._update_input_area_style()
 
         self.setLayout(layout)
 
@@ -618,7 +621,6 @@ class ChatWidget(QWidget):
             )
             # Show seed lock button in image mode
             self.seed_lock_btn.setVisible(True)
-            self.update_seed_lock_button()
         else:
             MaterialIcons.apply_to_button(
                 self.image_mode_btn, MaterialIcons.CHAT_SVG, size=20, keep_text=False
@@ -629,6 +631,132 @@ class ChatWidget(QWidget):
             self.input_field.setPlaceholderText("Type your message...")
             # Hide seed lock button in chat mode
             self.seed_lock_btn.setVisible(False)
+        
+        # Update visual style based on mode
+        self._update_input_area_style()
+        
+        # Update seed lock button style if visible
+        if self.seed_lock_btn.isVisible():
+            self.update_seed_lock_button()
+    
+    def _update_input_area_style(self):
+        """Update input area style based on current mode."""
+        if self.image_mode:
+            # Image mode - purple/violet theme
+            self.input_frame.setStyleSheet("""
+                QFrame {
+                    background: #2D1B3D;
+                    border: 2px solid #9B59B6;
+                    border-radius: 10px;
+                }
+            """)
+            self.input_field.setStyleSheet("""
+                QTextEdit {
+                    background: #3D2B4D;
+                    color: #E0E0E0;
+                    border: 1px solid #9B59B6;
+                    border-radius: 10px;
+                    padding: 8px 12px;
+                    font-size: 14px;
+                }
+                QTextEdit:focus {
+                    border: 2px solid #9B59B6;
+                    background: #4D3B5D;
+                }
+            """)
+            # Update image mode button to show it's active
+            self.image_mode_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #9B59B6;
+                    border: 2px solid #8E44AD;
+                    border-radius: 10px;
+                }
+                QPushButton:hover {
+                    background-color: #8E44AD;
+                }
+                QPushButton:pressed {
+                    background-color: #7D3C98;
+                }
+            """)
+            # Update Send button to purple theme
+            self.send_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #9B59B6;
+                    color: white;
+                    border: none;
+                    border-radius: 10px;
+                    padding: 8px 16px;
+                    font-weight: 500;
+                    font-size: 14px;
+                }
+                QPushButton:hover {
+                    background-color: #8E44AD;
+                }
+                QPushButton:pressed {
+                    background-color: #7D3C98;
+                }
+            """)
+            # Update seed lock button - use update_seed_lock_button to handle locked/unlocked states
+            # This will set purple for unlocked, red for locked
+            if self.seed_lock_btn.isVisible():
+                self.update_seed_lock_button()
+        else:
+            # Chat mode - default blue theme (explicitly reset to match theme)
+            self.input_frame.setStyleSheet("""
+                QFrame {
+                    background: transparent;
+                    border: none;
+                }
+            """)
+            # Reset input field to default theme style
+            self.input_field.setStyleSheet("""
+                QTextEdit {
+                    background: #2D2D2D;
+                    color: #E0E0E0;
+                    border: 1px solid #404040;
+                    border-radius: 10px;
+                    padding: 8px 12px;
+                    font-size: 14px;
+                }
+                QTextEdit:focus {
+                    border: 2px solid #4A9EFF;
+                }
+            """)
+            # Reset image mode button to default theme style
+            self.image_mode_btn.setStyleSheet("""
+                QPushButton {
+                    background: #4A9EFF;
+                    color: white;
+                    border: none;
+                    border-radius: 10px;
+                }
+                QPushButton:hover {
+                    background: #3A3A3A;
+                }
+                QPushButton:pressed {
+                    background: #FF6B6B;
+                }
+            """)
+            # Reset Send button to default theme style
+            self.send_btn.setStyleSheet("""
+                QPushButton {
+                    background: #4A9EFF;
+                    color: white;
+                    border: none;
+                    border-radius: 10px;
+                    padding: 8px 16px;
+                    font-weight: 500;
+                    font-size: 14px;
+                }
+                QPushButton:hover {
+                    background: #3A3A3A;
+                }
+                QPushButton:pressed {
+                    background: #FF6B6B;
+                }
+            """)
+            # Reset seed lock button (will be updated by update_seed_lock_button if visible)
+            # But since it's hidden in chat mode, we don't need to reset it
 
     def on_seed_lock_toggled(self, checked: bool):
         """Handle seed lock toggle."""
@@ -645,7 +773,7 @@ class ChatWidget(QWidget):
             self.seed_lock_btn.setToolTip(
                 "Seed locked - Using same seed for all images"
             )
-            # Red background when locked
+            # Red background when locked (same in both modes)
             self.seed_lock_btn.setStyleSheet(
                 """
                 QPushButton {
@@ -669,22 +797,40 @@ class ChatWidget(QWidget):
                 keep_text=False,
             )
             self.seed_lock_btn.setToolTip("Seed unlocked - Random seed for each image")
-            # Reset to default theme style when unlocked
-            self.seed_lock_btn.setStyleSheet(
+            # Use purple theme in image mode, blue in chat mode
+            if self.image_mode:
+                self.seed_lock_btn.setStyleSheet(
+                    """
+                    QPushButton {
+                        background-color: #9B59B6;
+                        border: none;
+                        border-radius: 10px;
+                    }
+                    QPushButton:hover {
+                        background-color: #8E44AD;
+                    }
+                    QPushButton:pressed {
+                        background-color: #7D3C98;
+                    }
                 """
-                QPushButton {
-                    background-color: #4A9EFF;
-                    border: none;
-                    border-radius: 10px;
-                }
-                QPushButton:hover {
-                    background-color: #3A3A3A;
-                }
-                QPushButton:pressed {
-                    background-color: #FF6B6B;
-                }
-            """
-            )
+                )
+            else:
+                # Default blue theme style when unlocked in chat mode
+                self.seed_lock_btn.setStyleSheet(
+                    """
+                    QPushButton {
+                        background-color: #4A9EFF;
+                        border: none;
+                        border-radius: 10px;
+                    }
+                    QPushButton:hover {
+                        background-color: #3A3A3A;
+                    }
+                    QPushButton:pressed {
+                        background-color: #FF6B6B;
+                    }
+                """
+                )
 
     def send_message(self):
         """Send message from input field."""

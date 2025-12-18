@@ -61,15 +61,13 @@ class StatusPanel(QFrame):
         self.status_label.setStyleSheet("font-weight: 500;")
         layout.addWidget(self.status_label)
 
-        layout.addStretch()
-
-        # Model icon
+        # Model icon (aligned left with status)
         model_icon_label = QLabel()
         MaterialIcons.apply_to_label(model_icon_label, MaterialIcons.ROBOT_SVG, size=20)
         model_icon_label.setToolTip("Model")
         layout.addWidget(model_icon_label)
 
-        # Model selector
+        # Model selector (aligned left with status)
         self.model_combo = QComboBox()
         self.model_combo.setMinimumWidth(0)  # Allow shrinking
         self.model_combo.setMaximumWidth(300)
@@ -86,6 +84,8 @@ class StatusPanel(QFrame):
         self.refresh_btn.setMaximumHeight(32)
         self.refresh_btn.clicked.connect(self._on_refresh_clicked)
         layout.addWidget(self.refresh_btn)
+
+        layout.addStretch()  # Push TTS controls to the right
 
         # TTS Controls
         # TTS Play button
