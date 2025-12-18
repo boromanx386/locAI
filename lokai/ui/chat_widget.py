@@ -13,11 +13,13 @@ from PySide6.QtWidgets import (
     QFrame,
     QLabel,
     QMenu,
+    QMessageBox,
 )
 from PySide6.QtCore import Signal, Qt, QTimer, QEvent
-from PySide6.QtGui import QFont, QPixmap, QMouseEvent, QContextMenuEvent, QColor
+from PySide6.QtGui import QFont, QPixmap, QMouseEvent, QContextMenuEvent, QColor, QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import QGraphicsDropShadowEffect
 from lokai.core.ollama_client import OllamaClient
+from lokai.core.image_processor import ImageProcessor
 from lokai.ui.material_icons import MaterialIcons
 import os
 import subprocess
@@ -357,7 +359,7 @@ class TypingIndicator(QFrame):
 class ChatWidget(QWidget):
     """Main chat widget with message display and input."""
 
-    message_sent = Signal(str)
+    message_sent = Signal(str, str)  # Signal(message, image_path)
     image_prompt_sent = Signal(str)  # Signal for image generation
     seed_lock_toggled = Signal(bool)  # Signal for seed lock toggle
     text_selected_for_tts = Signal(str)  # Signal when text is selected for TTS
@@ -378,12 +380,19 @@ class ChatWidget(QWidget):
         self.image_mode = False  # Toggle for image generation mode
         self.seed_locked = False  # Seed lock state
         self.typing_indicator = None  # Typing indicator widget
+        
+        # Image handling
+        self.image_processor = ImageProcessor()
+        self.last_uploaded_image = None  # Path to last uploaded image
 
         # Debounce timer for scroll (prevents too frequent scrolling)
         self.scroll_timer = QTimer()
         self.scroll_timer.setSingleShot(True)
         self.scroll_timer.timeout.connect(self._do_scroll)
         self.pending_scroll = False
+
+        # Enable drag and drop
+        self.setAcceptDrops(True)
 
         self.init_ui()
 
@@ -435,6 +444,8 @@ class ChatWidget(QWidget):
         )
         # Optimize for better performance
         self.input_field.setAcceptRichText(False)  # Faster without rich text
+        # Enable drag and drop for input field
+        self.input_field.setAcceptDrops(True)
         input_layout.addWidget(self.input_field, stretch=1)
 
         # Seed lock button (only visible in image mode)
@@ -483,9 +494,11 @@ class ChatWidget(QWidget):
         self.messages_layout.addWidget(welcome)
         self.messages_layout.addStretch()
 
-    def add_user_message(self, message: str):
+    def add_user_message(self, message: str, image_path: str = None):
         """Add user message to chat."""
-        bubble = ChatBubble(message, is_user=True)
+        # If message is empty but image exists, show image-only message
+        display_message = message if message else "📷 Image"
+        bubble = ChatBubble(display_message, is_user=True, image_path=image_path)
         # Connect bubble signals to widget signals
         bubble.text_selected_for_tts.connect(self.text_selected_for_tts.emit)
         bubble.text_selected_for_image.connect(self.text_selected_for_image.emit)
@@ -676,17 +689,23 @@ class ChatWidget(QWidget):
     def send_message(self):
         """Send message from input field."""
         message = self.input_field.toPlainText().strip()
-        if not message:
+        if not message and not self.last_uploaded_image:
             return
+
+        # Get image path if available
+        image_path = self.last_uploaded_image
 
         # Clear input
         self.input_field.clear()
+        
+        # Clear uploaded image after sending
+        self.last_uploaded_image = None
 
         # Emit appropriate signal based on mode
         if self.image_mode:
             self.image_prompt_sent.emit(message)
         else:
-            self.message_sent.emit(message)
+            self.message_sent.emit(message, image_path or "")
 
     def add_image_message(self, image_path: str, prompt: str = ""):
         """Add image message to chat."""
@@ -706,3 +725,69 @@ class ChatWidget(QWidget):
 
         self.current_ai_bubble = None
         self.add_welcome_message()
+    
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        """Handle drag enter event for image drop."""
+        if event.mimeData().hasUrls():
+            # Check if any of the URLs is a supported image
+            urls = event.mimeData().urls()
+            for url in urls:
+                file_path = url.toLocalFile()
+                if file_path and self.image_processor.is_supported_image(file_path):
+                    event.acceptProposedAction()
+                    return
+        event.ignore()
+    
+    def dropEvent(self, event: QDropEvent):
+        """Handle drop event for image upload."""
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            for url in urls:
+                file_path = url.toLocalFile()
+                if file_path and self.image_processor.is_supported_image(file_path):
+                    self.handle_image_upload(file_path)
+                    event.acceptProposedAction()
+                    return
+        event.ignore()
+    
+    def handle_image_upload(self, image_path: str):
+        """Handle image upload from drag & drop."""
+        if not os.path.exists(image_path):
+            QMessageBox.warning(
+                self,
+                "File Not Found",
+                f"Image file not found: {image_path}"
+            )
+            return
+        
+        # Get image info
+        img_info = self.image_processor.get_image_info(image_path)
+        if not img_info:
+            QMessageBox.warning(
+                self,
+                "Invalid Image",
+                "Could not read image file. Please ensure it's a valid image."
+            )
+            return
+        
+        # Check file size (max 50MB)
+        if img_info["file_size_mb"] > 50:
+            QMessageBox.warning(
+                self,
+                "File Too Large",
+                f"Image file is too large ({img_info['file_size_mb']}MB). Maximum size is 50MB."
+            )
+            return
+        
+        # Store as last uploaded image
+        self.last_uploaded_image = image_path
+        
+        # Show image in chat immediately
+        upload_msg = f"📁 Image uploaded: {os.path.basename(image_path)} ({img_info['width']}x{img_info['height']}, {img_info['file_size_mb']}MB)"
+        bubble = ChatBubble(upload_msg, is_user=True, image_path=image_path)
+        bubble.text_selected_for_tts.connect(self.text_selected_for_tts.emit)
+        bubble.text_selected_for_image.connect(self.text_selected_for_image.emit)
+        self.messages_layout.insertWidget(self.messages_layout.count() - 1, bubble)
+        self.scroll_to_bottom()
+        
+        print(f"Image uploaded: {image_path} ({img_info['width']}x{img_info['height']})")

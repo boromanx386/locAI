@@ -294,6 +294,10 @@ class TTSEngine:
             traceback.print_exc()
         finally:
             self.is_speaking = False
+            
+            # Clear GPU memory after TTS finishes
+            self._clear_gpu_memory()
+            
             # Call finished callback if provided
             if self.on_finished:
                 try:
@@ -340,6 +344,9 @@ class TTSEngine:
         if pygame.mixer.music.get_busy():
             pygame.mixer.music.stop()
         self.is_speaking = False
+        
+        # Clear GPU memory when stopped
+        self._clear_gpu_memory()
     
     def pause(self):
         """Pause current speech."""
@@ -352,4 +359,31 @@ class TTSEngine:
         if self.is_paused:
             pygame.mixer.music.unpause()
             self.is_paused = False
+    
+    def _clear_gpu_memory(self):
+        """Clear GPU memory after TTS operations."""
+        try:
+            import torch
+            import gc
+            
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+                for _ in range(3):
+                    torch.cuda.empty_cache()
+                try:
+                    torch.cuda.ipc_collect()
+                except AttributeError:
+                    pass
+                try:
+                    torch.cuda.reset_peak_memory_stats()
+                except:
+                    pass
+                gc.collect()
+                print("TTS GPU memory cleared")
+        except ImportError:
+            # PyTorch not available, skip
+            pass
+        except Exception as e:
+            # Silently ignore errors
+            pass
 

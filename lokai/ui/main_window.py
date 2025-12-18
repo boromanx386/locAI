@@ -60,6 +60,10 @@ class MainWindow(QMainWindow):
         self.last_image_seed = None  # Last seed used for image generation
         self.seed_locked = False  # Whether seed is locked
 
+        # Track last used model for GPU memory management
+        self.last_used_model = None
+        self.last_was_vision = False  # Track if last request was vision (with images)
+
         # Cache LLM parameters to avoid repeated config reads
         self._llm_params_cache = None
         self._conversation_settings_cache = None
@@ -265,7 +269,7 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.chat_widget, stretch=1)
 
         # Connect chat widget signals
-        self.chat_widget.message_sent.connect(self.on_message_sent)
+        self.chat_widget.message_sent.connect(lambda msg, img: self.on_message_sent(msg, img))
         self.chat_widget.image_prompt_sent.connect(self.on_image_prompt_sent)
         self.chat_widget.seed_lock_toggled.connect(self.on_seed_lock_toggled)
         self.chat_widget.text_selected_for_tts.connect(self.on_text_selected_for_tts)
@@ -414,7 +418,7 @@ class MainWindow(QMainWindow):
         self.config_manager.save_config()
         self.status_bar.showMessage(f"Selected model: {model_name}")
 
-    def on_message_sent(self, message: str):
+    def on_message_sent(self, message: str, image_path: str = ""):
         """Handle message sent from chat widget."""
         # Quick status check before sending (throttled - only if not checked recently)
         self.check_ollama_status(force=False)
@@ -443,8 +447,46 @@ class MainWindow(QMainWindow):
             print("Auto-unloading image model to free GPU memory...")
             self.image_generator.unload_model()
 
+        # Process image if provided
+        images_base64 = []
+        is_vision_request = False
+        if image_path and os.path.exists(image_path):
+            from lokai.core.image_processor import ImageProcessor
+            processor = ImageProcessor()
+            base64_image = processor.image_to_base64(image_path)
+            if base64_image:
+                images_base64.append(base64_image)
+                image_size_kb = len(base64_image) / 1024
+                print(f"Image converted to base64: {len(base64_image)} characters ({image_size_kb:.1f} KB)")
+                is_vision_request = True
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Image Conversion Failed",
+                    "Could not convert image to base64. Please try again."
+                )
+                return
+
+        # GPU memory management: unload previous model if switching between vision and non-vision
+        # or if switching to different model
+        if self.last_used_model and self.last_used_model != model:
+            print(f"Model changed from {self.last_used_model} to {model} - unloading previous model...")
+            self.ollama_client.unload_model(self.last_used_model)
+            # Clear context when switching models
+            self.current_context = None
+        elif self.last_used_model == model and self.last_was_vision != is_vision_request:
+            # Same model but switching between vision and non-vision - unload to free GPU
+            print(f"Switching between vision/non-vision mode - unloading model {model}...")
+            self.ollama_client.unload_model(model)
+            # Clear context when switching modes
+            self.current_context = None
+
+        # Update tracking
+        self.last_used_model = model
+        self.last_was_vision = is_vision_request
+
         # Send message to Ollama
-        self.chat_widget.add_user_message(message)
+        self.chat_widget.add_user_message(message, image_path=image_path if image_path else None)
 
         # Add to conversation history
         self.conversation_history.append({"role": "user", "content": message})
@@ -463,6 +505,13 @@ class MainWindow(QMainWindow):
         if self.current_context is None and len(self.conversation_history) > 0:
             use_explicit_history = True
 
+        # If sending image, don't use context (vision models work better without context)
+        # Send None for context when images are present (like in old code)
+        context_to_use = None if (images_base64 and len(images_base64) > 0) else self.current_context
+        if images_base64 and len(images_base64) > 0:
+            print("Image detected - using None context for vision model")
+            use_explicit_history = True
+        
         if use_explicit_history:
             # Build prompt with explicit history (optimized for performance)
             # Pre-allocate list size to avoid reallocations
@@ -503,8 +552,9 @@ class MainWindow(QMainWindow):
         # This prevents empty bubble from appearing immediately
 
         # Create worker thread for non-blocking generation
+        # Use context_to_use (None for images, self.current_context otherwise)
         worker = OllamaWorker(
-            self.ollama_client, model, final_prompt, self.current_context, llm_params
+            self.ollama_client, model, final_prompt, context_to_use, llm_params, images=images_base64 if images_base64 else None
         )
         # Connect signals - create bubble on first chunk
         worker.chunk_received.connect(self._on_chunk_received)
@@ -518,6 +568,10 @@ class MainWindow(QMainWindow):
 
     def new_chat(self):
         """Start a new chat conversation."""
+        # Reset model tracking when starting new chat
+        self.last_used_model = None
+        self.last_was_vision = False
+        
         reply = QMessageBox.question(
             self,
             "New Chat",
@@ -729,6 +783,34 @@ class MainWindow(QMainWindow):
         """Handle response completion."""
         try:
             self.current_context = new_context
+            
+            # Unload model after response to free GPU memory for next request
+            # This prevents GPU memory buildup and ensures fast subsequent requests
+            if self.last_used_model:
+                print(f"Model {self.last_used_model} finished - unloading to free GPU memory...")
+                self.ollama_client.unload_model(self.last_used_model)
+                
+                # Aggressive GPU memory cleanup after unload
+                try:
+                    import torch
+                    import gc
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                        for _ in range(5):
+                            torch.cuda.empty_cache()
+                        try:
+                            torch.cuda.ipc_collect()
+                        except AttributeError:
+                            pass
+                        gc.collect()
+                        print("GPU memory cleared after model unload")
+                except:
+                    pass
+                
+                # Clear context after vision model (helps with next request)
+                if self.last_was_vision:
+                    self.current_context = None
+            
             # Only finish if bubble exists
             if self.chat_widget.current_ai_bubble is not None:
                 # Get the full response text from bubble
@@ -1111,6 +1193,74 @@ class MainWindow(QMainWindow):
                 self.current_worker.terminate()
                 self.current_worker.wait(1000)  # Wait max 1 second
 
+        # Unload all models to free GPU memory before closing
+        print("Unloading all models to free GPU memory...")
+        
+        # Unload Ollama models
+        if hasattr(self, "ollama_client") and self.ollama_client:
+            try:
+                self.ollama_client.unload_all_models_silent()
+            except Exception as e:
+                print(f"Error unloading Ollama models: {e}")
+        
+        # Unload image generator model
+        if hasattr(self, "image_generator") and self.image_generator:
+            try:
+                if self.image_generator.pipeline is not None:
+                    self.image_generator.unload_model()
+            except Exception as e:
+                print(f"Error unloading image generator: {e}")
+        
+        # Force final GPU memory cleanup (aggressive)
+        try:
+            import torch
+            import gc
+            import os
+            
+            # Force garbage collection multiple times
+            for _ in range(3):
+                gc.collect()
+            
+            # Clear CUDA cache if available (very aggressive cleanup)
+            if torch.cuda.is_available():
+                # Reset CUDA context to force release of all memory
+                try:
+                    # Get current device
+                    device = torch.cuda.current_device()
+                    # Synchronize all operations
+                    torch.cuda.synchronize(device)
+                    
+                    # Multiple cache clears
+                    for _ in range(5):
+                        torch.cuda.empty_cache()
+                    
+                    # Try to reset CUDA context (if possible)
+                    try:
+                        torch.cuda.reset_peak_memory_stats(device)
+                    except:
+                        pass
+                    
+                    # Collect IPC resources
+                    try:
+                        torch.cuda.ipc_collect()
+                    except AttributeError:
+                        pass
+                    
+                    # Final garbage collection
+                    gc.collect()
+                    
+                    print("GPU memory cache aggressively cleared")
+                except Exception as e:
+                    print(f"Error in aggressive GPU cleanup: {e}")
+                    # Fallback: try basic cleanup
+                    try:
+                        torch.cuda.empty_cache()
+                        gc.collect()
+                    except:
+                        pass
+        except Exception as e:
+            print(f"Error clearing GPU cache: {e}")
+
         # Save any pending configuration
         try:
             self.config_manager.save_config()
@@ -1126,13 +1276,14 @@ class OllamaWorker(QThread):
     finished = Signal(object)  # new_context
     error_occurred = Signal(str)
 
-    def __init__(self, client, model, prompt, context, llm_params=None):
+    def __init__(self, client, model, prompt, context, llm_params=None, images=None):
         super().__init__()
         self.client = client
         self.model = model
         self.prompt = prompt
         self.context = context
         self.llm_params = llm_params or {}
+        self.images = images  # List of base64-encoded images for vision models
 
     def run(self):
         """Run in background thread."""
@@ -1156,6 +1307,7 @@ class OllamaWorker(QThread):
                 prompt=self.prompt,
                 context=self.context,
                 callback=on_chunk,
+                images=self.images,
                 num_ctx=self.llm_params.get("num_ctx"),
                 temperature=self.llm_params.get("temperature"),
                 top_p=self.llm_params.get("top_p"),

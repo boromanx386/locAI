@@ -263,20 +263,44 @@ class ImageGenerator:
             # Clear LoRAs when model is unloaded
             self.active_loras = []
 
-            # Force garbage collection
+            # Force garbage collection (multiple times)
             import gc
 
-            gc.collect()
+            for _ in range(3):
+                gc.collect()
 
-            # Clear CUDA cache if available (multiple times for better cleanup)
+            # Clear CUDA cache if available (aggressive cleanup)
             if torch.cuda.is_available():
-                torch.cuda.synchronize()  # Wait for all operations to complete
-                torch.cuda.empty_cache()  # Clear cache
-                torch.cuda.empty_cache()  # Second pass for better cleanup
                 try:
-                    torch.cuda.ipc_collect()  # Collect IPC resources if available
-                except AttributeError:
-                    pass  # ipc_collect not available in all PyTorch versions
+                    device = torch.cuda.current_device()
+                    torch.cuda.synchronize(device)  # Wait for all operations to complete
+                    
+                    # Multiple cache clears
+                    for _ in range(5):
+                        torch.cuda.empty_cache()
+                    
+                    # Reset peak memory stats
+                    try:
+                        torch.cuda.reset_peak_memory_stats(device)
+                    except:
+                        pass
+                    
+                    # Collect IPC resources
+                    try:
+                        torch.cuda.ipc_collect()  # Collect IPC resources if available
+                    except AttributeError:
+                        pass
+                    
+                    # Final garbage collection
+                    gc.collect()
+                except Exception as e:
+                    print(f"Error in GPU cleanup: {e}")
+                    # Fallback
+                    try:
+                        torch.cuda.empty_cache()
+                        gc.collect()
+                    except:
+                        pass
 
             print("Model unloaded and GPU memory freed")
 

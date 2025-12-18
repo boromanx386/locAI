@@ -2,6 +2,7 @@
 Ollama Client for locAI.
 Handles API communication with Ollama server for LLM interactions.
 """
+
 import json
 import requests
 from typing import Optional, Callable, List, Tuple
@@ -9,53 +10,47 @@ from typing import Optional, Callable, List, Tuple
 
 class OllamaClient:
     """Client for interacting with Ollama API."""
-    
+
     def __init__(self, base_url: str = "http://localhost:11434"):
         """
         Initialize OllamaClient.
-        
+
         Args:
             base_url: Base URL for Ollama API
         """
         self.base_url = base_url
         self.session = requests.Session()
         self.timeout = 7200  # 2 hours for long generations
-    
+
     def is_running(self) -> bool:
         """
         Check if Ollama server is running.
-        
+
         Returns:
             True if server is accessible
         """
         try:
-            response = self.session.get(
-                f"{self.base_url}/api/tags",
-                timeout=5
-            )
+            response = self.session.get(f"{self.base_url}/api/tags", timeout=5)
             return response.status_code == 200
         except:
             return False
-    
+
     def get_models(self) -> List[str]:
         """
         Get list of available models.
-        
+
         Returns:
             List of model names
         """
         try:
-            response = self.session.get(
-                f"{self.base_url}/api/tags",
-                timeout=5
-            )
+            response = self.session.get(f"{self.base_url}/api/tags", timeout=5)
             if response.status_code == 200:
                 data = response.json()
                 return [model["name"] for model in data.get("models", [])]
             return []
         except:
             return []
-    
+
     def generate_response_stream(
         self,
         model: str,
@@ -69,11 +64,11 @@ class OllamaClient:
         top_k: Optional[int] = None,
         repeat_penalty: Optional[float] = None,
         num_predict: Optional[int] = None,
-        seed: Optional[int] = None
+        seed: Optional[int] = None,
     ) -> Tuple[str, Optional[List[int]]]:
         """
         Generate response from model with streaming support.
-        
+
         Args:
             model: Model name to use
             prompt: User prompt
@@ -87,7 +82,7 @@ class OllamaClient:
             repeat_penalty: Repeat penalty (optional)
             num_predict: Maximum tokens to generate, -1 for unlimited (optional)
             seed: Seed for reproducibility, -1 for random (optional)
-            
+
         Returns:
             Tuple of (full_response, new_context)
         """
@@ -97,11 +92,11 @@ class OllamaClient:
                 "prompt": prompt,
                 "stream": True,
             }
-            
-            # Add context if provided
-            if context is not None and len(context) > 0:
+
+            # Add context if provided (check like in old code)
+            if context is not None and context:
                 payload["context"] = context
-            
+
             # Add LLM parameters if provided
             if num_ctx is not None:
                 payload["num_ctx"] = num_ctx
@@ -117,74 +112,106 @@ class OllamaClient:
                 payload["num_predict"] = num_predict
             if seed is not None and seed != -1:
                 payload["seed"] = seed
-            
+
             # Add images if provided (for vision models like LLaVA)
             if images and len(images) > 0:
                 payload["images"] = images
                 print(f"Sending {len(images)} image(s) to model {model}")
-            
+
             response = self.session.post(
                 f"{self.base_url}/api/generate",
                 json=payload,
                 stream=True,
-                timeout=self.timeout
+                timeout=self.timeout,
             )
-            
+
             if response.status_code == 200:
                 full_response = ""
                 new_context = None
-                
+
                 for line in response.iter_lines():
                     if line:
                         try:
                             data = json.loads(line.decode("utf-8"))
-                            
+
                             # Handle response chunks
                             if "response" in data:
                                 chunk = data["response"]
                                 full_response += chunk
                                 if callback:
                                     callback(chunk)
-                            
+
                             # Store context for next request
                             if "context" in data:
                                 new_context = data["context"]
-                            
+
                             # Check if generation is done
                             if data.get("done", False):
                                 break
-                            
+
                             # Handle errors in stream
                             if "error" in data:
                                 error_msg = data["error"]
                                 print(f"Ollama error in stream: {error_msg}")
                                 return f"Error: {error_msg}", new_context
-                                
+
                         except json.JSONDecodeError:
                             continue
-                
+
                 # Check for empty response
                 if not full_response.strip():
                     return (
                         "Model returned empty response. The model might not be properly loaded.",
-                        new_context
+                        new_context,
                     )
-                
+
                 return full_response, new_context
             else:
-                error_msg = f"HTTP {response.status_code}: {response.text}"
-                print(f"Ollama API error: {error_msg}")
-                return f"Error generating response: {error_msg}", None
-                
+                # Try to parse error response
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get("error", response.text)
+                except:
+                    error_msg = response.text
+
+                full_error = f"HTTP {response.status_code}: {error_msg}"
+                print(f"Ollama API error: {full_error}")
+
+                # Provide more helpful error messages
+                if response.status_code == 500:
+                    if (
+                        "model runner" in error_msg.lower()
+                        or "unexpectedly stopped" in error_msg.lower()
+                    ):
+                        return (
+                            "Model runner stopped unexpectedly. This may be due to:\n"
+                            "- Insufficient GPU/CPU memory\n"
+                            "- Model not properly loaded\n"
+                            "- Image too large or in unsupported format\n\n"
+                            "Try:\n"
+                            "1. Restart Ollama server\n"
+                            "2. Use a smaller image\n"
+                            "3. Ensure you're using a vision model (llava, llama3.2-vision, etc.)",
+                            None,
+                        )
+
+                return f"Error generating response: {full_error}", None
+
         except requests.exceptions.Timeout:
-            return "Request timed out. The model might be taking too long to respond.", None
+            return (
+                "Request timed out. The model might be taking too long to respond.",
+                None,
+            )
         except requests.exceptions.ConnectionError:
-            return "Cannot connect to Ollama server. Please ensure Ollama is running.", None
+            return (
+                "Cannot connect to Ollama server. Please ensure Ollama is running.",
+                None,
+            )
         except Exception as e:
             error_msg = f"Unexpected error: {str(e)}"
             print(f"Ollama client error: {error_msg}")
             return f"Error: {error_msg}", None
-    
+
     def generate_response(
         self,
         model: str,
@@ -197,11 +224,11 @@ class OllamaClient:
         top_k: Optional[int] = None,
         repeat_penalty: Optional[float] = None,
         num_predict: Optional[int] = None,
-        seed: Optional[int] = None
+        seed: Optional[int] = None,
     ) -> Tuple[str, Optional[List[int]]]:
         """
         Generate response without streaming (collects all chunks first).
-        
+
         Args:
             model: Model name to use
             prompt: User prompt
@@ -214,16 +241,16 @@ class OllamaClient:
             repeat_penalty: Repeat penalty (optional)
             num_predict: Maximum tokens to generate, -1 for unlimited (optional)
             seed: Seed for reproducibility, -1 for random (optional)
-            
+
         Returns:
             Tuple of (full_response, new_context)
         """
         full_response = ""
-        
+
         def collect_chunk(chunk: str):
             nonlocal full_response
             full_response += chunk
-        
+
         response, new_context = self.generate_response_stream(
             model=model,
             prompt=prompt,
@@ -236,29 +263,51 @@ class OllamaClient:
             top_k=top_k,
             repeat_penalty=repeat_penalty,
             num_predict=num_predict,
-            seed=seed
+            seed=seed,
         )
-        
+
         return response, new_context
-    
+
     def unload_model(self, model_name: str) -> bool:
         """
         Unload a specific Ollama model from VRAM.
-        
+
         Args:
             model_name: Name of the model to unload
-            
+
         Returns:
             True if successful, False otherwise
         """
         try:
             import subprocess
+
             result = subprocess.run(
                 ["ollama", "stop", model_name],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
             )
+            
+            # Aggressive GPU memory cleanup after unload
+            try:
+                import torch
+                import gc
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                    for _ in range(5):
+                        torch.cuda.empty_cache()
+                    try:
+                        torch.cuda.ipc_collect()
+                    except AttributeError:
+                        pass
+                    try:
+                        torch.cuda.reset_peak_memory_stats()
+                    except:
+                        pass
+                    gc.collect()
+            except:
+                pass
+            
             if result.returncode == 0:
                 print(f"Model {model_name} unloaded successfully")
                 return True
@@ -268,7 +317,7 @@ class OllamaClient:
         except Exception as e:
             print(f"Error unloading model {model_name}: {e}")
             return False
-    
+
     def unload_all_models_silent(self) -> None:
         """
         Silently unload all loaded Ollama models to free GPU memory.
@@ -276,19 +325,16 @@ class OllamaClient:
         """
         try:
             import subprocess
-            
+
             # First, get list of actually loaded models
             try:
                 result = subprocess.run(
-                    ["ollama", "list"],
-                    capture_output=True,
-                    text=True,
-                    timeout=10
+                    ["ollama", "list"], capture_output=True, text=True, timeout=10
                 )
-                
+
                 if result.returncode == 0:
                     # Parse output to get model names
-                    lines = result.stdout.strip().split('\n')
+                    lines = result.stdout.strip().split("\n")
                     loaded_models = []
                     for line in lines[1:]:  # Skip header
                         if line.strip():
@@ -296,11 +342,11 @@ class OllamaClient:
                             if len(parts) > 0:
                                 model_name = parts[0]
                                 # Extract base model name (before ':')
-                                if ':' in model_name:
-                                    model_name = model_name.split(':')[0]
+                                if ":" in model_name:
+                                    model_name = model_name.split(":")[0]
                                 if model_name not in loaded_models:
                                     loaded_models.append(model_name)
-                    
+
                     # Unload all loaded models
                     for model in loaded_models:
                         try:
@@ -308,25 +354,37 @@ class OllamaClient:
                                 ["ollama", "stop", model],
                                 capture_output=True,
                                 text=True,
-                                timeout=5
+                                timeout=5,
                             )
                         except:
                             pass  # Silent fail
-                    
+
                     if loaded_models:
-                        print(f"Unloaded {len(loaded_models)} Ollama model(s): {', '.join(loaded_models)}")
+                        print(
+                            f"Unloaded {len(loaded_models)} Ollama model(s): {', '.join(loaded_models)}"
+                        )
                     else:
                         print("No Ollama models were loaded")
                 else:
                     # Fallback: try common model names
-                    models_to_unload = ["llava", "mixtral", "llama", "codellama", "mistral", "qwen", "phi", "gemma", "neural-chat"]
+                    models_to_unload = [
+                        "llava",
+                        "mixtral",
+                        "llama",
+                        "codellama",
+                        "mistral",
+                        "qwen",
+                        "phi",
+                        "gemma",
+                        "neural-chat",
+                    ]
                     for model in models_to_unload:
                         try:
                             subprocess.run(
                                 ["ollama", "stop", model],
                                 capture_output=True,
                                 text=True,
-                                timeout=5
+                                timeout=5,
                             )
                         except:
                             pass  # Silent fail
@@ -334,27 +392,45 @@ class OllamaClient:
             except Exception as e:
                 print(f"Error getting model list: {e}")
                 # Fallback: try common model names
-                models_to_unload = ["llava", "mixtral", "llama", "codellama", "mistral", "qwen", "phi", "gemma", "neural-chat"]
+                models_to_unload = [
+                    "llava",
+                    "mixtral",
+                    "llama",
+                    "codellama",
+                    "mistral",
+                    "qwen",
+                    "phi",
+                    "gemma",
+                    "neural-chat",
+                ]
                 for model in models_to_unload:
                     try:
                         subprocess.run(
                             ["ollama", "stop", model],
                             capture_output=True,
                             text=True,
-                            timeout=5
+                            timeout=5,
                         )
                     except:
                         pass  # Silent fail
                 print("Ollama models unloaded (fallback method)")
-            
-            # Clear CUDA cache after unloading
+
+            # Clear CUDA cache after unloading (aggressive cleanup)
             try:
                 import torch
+                import gc
+
                 if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()  # Wait for all operations to complete
+                    torch.cuda.empty_cache()  # Clear cache
+                    torch.cuda.empty_cache()  # Second pass
+                    try:
+                        torch.cuda.ipc_collect()  # Collect IPC resources
+                    except AttributeError:
+                        pass
+                    gc.collect()  # Force garbage collection
             except:
                 pass
-            
+
         except Exception as e:
             print(f"Error in silent unload: {e}")
-
