@@ -52,20 +52,38 @@ class StatusPanel(QFrame):
 
         # Status indicator
         self.status_indicator = QLabel("●")
+        self.status_indicator.setFixedSize(24, 24)
         self.status_indicator.setStyleSheet(
-            f"color: {Theme.get_status_color(False)}; font-size: 16px; font-weight: bold;"
+            f"""
+            QLabel {{
+                color: {Theme.get_status_color(False)};
+                font-size: 16px;
+                font-weight: bold;
+                border-radius: 12px;
+                background: transparent;
+            }}
+            """
         )
         layout.addWidget(self.status_indicator)
 
-        # Status text
-        self.status_label = QLabel("Checking Ollama...")
-        self.status_label.setStyleSheet("font-weight: 500;")
+        # Status text (hidden - only indicator is visible)
+        self.status_label = QLabel("")
+        self.status_label.setVisible(False)
         layout.addWidget(self.status_label)
 
         # Model icon (aligned left with status)
         model_icon_label = QLabel()
         MaterialIcons.apply_to_label(model_icon_label, MaterialIcons.ROBOT_SVG, size=20)
+        model_icon_label.setFixedSize(24, 24)
         model_icon_label.setToolTip("Model")
+        model_icon_label.setStyleSheet(
+            """
+            QLabel {
+                border-radius: 12px;
+                background: transparent;
+            }
+            """
+        )
         layout.addWidget(model_icon_label)
 
         # Model selector (aligned left with status)
@@ -97,6 +115,15 @@ class StatusPanel(QFrame):
         self.stop_btn.clicked.connect(self._on_stop_clicked)
         layout.addWidget(self.stop_btn)
 
+        # Semantic memory indicator (if enabled)
+        self.semantic_memory_label = QLabel()
+        MaterialIcons.apply_to_label(
+            self.semantic_memory_label, MaterialIcons.COGNITION_2_SVG, size=20
+        )
+        self.semantic_memory_label.setToolTip("Semantic memory: disabled")
+        self.semantic_memory_label.setVisible(False)
+        layout.addWidget(self.semantic_memory_label)
+
         layout.addStretch()  # Push TTS controls to the right
 
         # TTS Voice icon
@@ -104,7 +131,16 @@ class StatusPanel(QFrame):
         MaterialIcons.apply_to_label(
             voice_icon_label, MaterialIcons.MICROPHONE_SVG, size=20
         )
+        voice_icon_label.setFixedSize(24, 24)
         voice_icon_label.setToolTip("Voice")
+        voice_icon_label.setStyleSheet(
+            """
+            QLabel {
+                border-radius: 12px;
+                background: transparent;
+            }
+            """
+        )
         layout.addWidget(voice_icon_label)
 
         # TTS Voice dropdown
@@ -185,7 +221,15 @@ class StatusPanel(QFrame):
         """Set status to online."""
         color = Theme.get_status_color(True)
         self.status_indicator.setStyleSheet(
-            f"color: {color}; font-size: 16px; font-weight: bold;"
+            f"""
+            QLabel {{
+                color: {color};
+                font-size: 16px;
+                font-weight: bold;
+                border-radius: 12px;
+                background: transparent;
+            }}
+            """
         )
         self.status_label.setText("Ollama Online")
         self.status_label.setStyleSheet("font-weight: 500; color: #51CF66;")
@@ -200,7 +244,15 @@ class StatusPanel(QFrame):
         """Set status to offline."""
         color = Theme.get_status_color(False)
         self.status_indicator.setStyleSheet(
-            f"color: {color}; font-size: 16px; font-weight: bold;"
+            f"""
+            QLabel {{
+                color: {color};
+                font-size: 16px;
+                font-weight: bold;
+                border-radius: 12px;
+                background: transparent;
+            }}
+            """
         )
         if error:
             self.status_label.setText(f"Ollama Offline - {error}")
@@ -220,6 +272,25 @@ class StatusPanel(QFrame):
     def _on_stop_clicked(self):
         """Handle stop button click - emit signal."""
         self.stop_clicked.emit()
+
+    def update_semantic_memory_status(self, enabled: bool, message_count: int = 0):
+        """
+        Update semantic memory indicator.
+
+        Args:
+            enabled: Whether semantic memory is enabled
+            message_count: Number of embedded messages
+        """
+        if enabled:
+            self.semantic_memory_label.setVisible(True)
+            if message_count > 0:
+                self.semantic_memory_label.setToolTip(
+                    f"Semantic memory: active ({message_count} messages indexed)"
+                )
+            else:
+                self.semantic_memory_label.setToolTip("Semantic memory: active")
+        else:
+            self.semantic_memory_label.setVisible(False)
 
     def refresh_models(self):
         """Refresh the list of available models (non-blocking)."""

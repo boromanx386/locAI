@@ -20,15 +20,21 @@ import json
 from datetime import datetime
 from pathlib import Path
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QEvent, QSize
+from typing import Dict, List
 from PySide6.QtGui import QAction, QIcon, QPixmap, QPainter, QFont, QColor
+from PySide6.QtSvg import QSvgRenderer
+from PySide6.QtCore import QByteArray
 from lokai.core.config_manager import ConfigManager
 from lokai.ui.theme import Theme
 from lokai.ui.status_panel import StatusPanel
 from lokai.ui.chat_widget import ChatWidget
 from lokai.ui.settings_dialog import SettingsDialog
+from lokai.ui.debug_dialog import DebugDialog
 from lokai.core.ollama_detector import OllamaDetector
 from lokai.core.ollama_client import OllamaClient
 from lokai.core.image_generator import ImageGenerator
+from lokai.core.embedding_client import EmbeddingClient
+from lokai.core.chat_vector_store import ChatVectorStore
 from lokai.ui.image_worker import ImageGenerationWorker
 
 
@@ -50,11 +56,51 @@ class MainWindow(QMainWindow):
         self.ollama_detector = OllamaDetector(base_url)
         self.ollama_client = OllamaClient(base_url)
 
+        # Initialize embedding components for semantic memory
+        self.embedding_enabled = config_manager.get("rag.enabled", False)
+        self.embedding_workers = []  # Track all embedding workers to clean up properly
+        if self.embedding_enabled:
+            try:
+                force_cpu = config_manager.get("rag.force_cpu", True)
+                self.embedding_client = EmbeddingClient(base_url, force_cpu=force_cpu)
+                # Set embedding model from config
+                embedding_model = config_manager.get(
+                    "rag.embedding_model", "nomic-embed-text:v1.5"
+                )
+                self.embedding_client.default_model = embedding_model
+                # Store embeddings in config directory (will be set per chat)
+                config_dir = Path(config_manager.config_dir)
+                self.embeddings_dir = config_dir / "chat_embeddings"
+                self.embeddings_dir.mkdir(parents=True, exist_ok=True)
+                self.chat_vector_store = None  # Will be initialized per chat
+                self.semantic_memory_threshold = config_manager.get(
+                    "rag.semantic_memory_threshold", 30
+                )
+                self.top_k_relevant = config_manager.get("rag.top_k_relevant", 5)
+                self.recent_messages_count = config_manager.get(
+                    "rag.recent_messages_count", 10
+                )
+            except Exception as e:
+                print(f"Error initializing embedding components: {e}")
+                import traceback
+
+                traceback.print_exc()
+                # Disable embedding on error
+                self.embedding_enabled = False
+                self.embedding_client = None
+                self.chat_vector_store = None
+        else:
+            self.embedding_client = None
+            self.chat_vector_store = None
+
         # Current conversation context
         self.current_context = None
         self.conversation_history = (
             []
         )  # List of {"role": "user"/"assistant", "content": "..."}
+
+        # Chat ID for semantic memory (unique per chat session)
+        self.current_chat_id = None  # Will be generated when starting new chat
 
         # Image generation seed management
         self.last_image_seed = None  # Last seed used for image generation
@@ -83,11 +129,79 @@ class MainWindow(QMainWindow):
         self._last_status_check = None
         self._status_check_interval = 30000  # Only check if 30+ seconds passed
 
+    def _reload_embedding_components(self):
+        """Reload embedding components when RAG settings change."""
+        # Clean up existing workers
+        for worker in self.embedding_workers[:]:
+            if worker.isRunning():
+                worker.terminate()
+                worker.wait()
+        self.embedding_workers.clear()
+
+        # Reload config values
+        self.embedding_enabled = self.config_manager.get("rag.enabled", False)
+
+        if self.embedding_enabled:
+            try:
+                base_url = self.config_manager.get(
+                    "ollama.base_url", "http://localhost:11434"
+                )
+                force_cpu = self.config_manager.get("rag.force_cpu", True)
+                self.embedding_client = EmbeddingClient(base_url, force_cpu=force_cpu)
+                # Set embedding model from config
+                embedding_model = self.config_manager.get(
+                    "rag.embedding_model", "nomic-embed-text:v1.5"
+                )
+                self.embedding_client.default_model = embedding_model
+                # Ensure embeddings directory exists
+                config_dir = Path(self.config_manager.config_dir)
+                self.embeddings_dir = config_dir / "chat_embeddings"
+                self.embeddings_dir.mkdir(parents=True, exist_ok=True)
+                # Reload threshold and search parameters
+                self.semantic_memory_threshold = self.config_manager.get(
+                    "rag.semantic_memory_threshold", 30
+                )
+                self.top_k_relevant = self.config_manager.get("rag.top_k_relevant", 5)
+                self.recent_messages_count = self.config_manager.get(
+                    "rag.recent_messages_count", 10
+                )
+                # Reinitialize vector store for current chat if exists
+                if self.current_chat_id:
+                    embedding_store_path = (
+                        self.embeddings_dir / f"chat_{self.current_chat_id}.json"
+                    )
+                    self.chat_vector_store = ChatVectorStore(embedding_store_path)
+                # Update status indicator
+                if hasattr(self.status_panel, "update_semantic_memory_status"):
+                    message_count = 0
+                    if self.chat_vector_store:
+                        stats = self.chat_vector_store.get_stats()
+                        message_count = stats.get("total_messages", 0)
+                    self.status_panel.update_semantic_memory_status(True, message_count)
+            except Exception as e:
+                print(f"Error reloading embedding components: {e}")
+                import traceback
+
+                traceback.print_exc()
+                # Disable embedding on error
+                self.embedding_enabled = False
+                self.embedding_client = None
+                self.chat_vector_store = None
+                if hasattr(self.status_panel, "update_semantic_memory_status"):
+                    self.status_panel.update_semantic_memory_status(False, 0)
+        else:
+            # Disable embedding
+            self.embedding_client = None
+            if self.chat_vector_store:
+                self.chat_vector_store = None
+            if hasattr(self.status_panel, "update_semantic_memory_status"):
+                self.status_panel.update_semantic_memory_status(False, 0)
+
     def _cache_config_values(self, model_name: str = None):
         """
         Cache frequently accessed config values to avoid repeated file reads.
         Uses model-specific settings if available, otherwise uses global defaults.
-        
+
         Args:
             model_name: Optional model name to load model-specific settings
         """
@@ -95,17 +209,33 @@ class MainWindow(QMainWindow):
         model_settings = None
         if model_name:
             model_settings = self.config_manager.get_llm_model_setting(model_name)
-        
+
         # Use model-specific settings or fall back to global defaults
         if model_settings and "llm_params" in model_settings:
             llm_params = model_settings["llm_params"]
             self._llm_params_cache = {
-                "num_ctx": llm_params.get("num_ctx", self.config_manager.get("ollama.llm_params.num_ctx", 4096)),
-                "temperature": llm_params.get("temperature", self.config_manager.get("ollama.llm_params.temperature", 0.7)),
-                "top_p": llm_params.get("top_p", self.config_manager.get("ollama.llm_params.top_p", 0.9)),
-                "top_k": llm_params.get("top_k", self.config_manager.get("ollama.llm_params.top_k", 40)),
-                "repeat_penalty": llm_params.get("repeat_penalty", self.config_manager.get("ollama.llm_params.repeat_penalty", 1.1)),
-                "num_predict": llm_params.get("num_predict", self.config_manager.get("ollama.llm_params.num_predict", -1)),
+                "num_ctx": llm_params.get(
+                    "num_ctx",
+                    self.config_manager.get("ollama.llm_params.num_ctx", 4096),
+                ),
+                "temperature": llm_params.get(
+                    "temperature",
+                    self.config_manager.get("ollama.llm_params.temperature", 0.7),
+                ),
+                "top_p": llm_params.get(
+                    "top_p", self.config_manager.get("ollama.llm_params.top_p", 0.9)
+                ),
+                "top_k": llm_params.get(
+                    "top_k", self.config_manager.get("ollama.llm_params.top_k", 40)
+                ),
+                "repeat_penalty": llm_params.get(
+                    "repeat_penalty",
+                    self.config_manager.get("ollama.llm_params.repeat_penalty", 1.1),
+                ),
+                "num_predict": llm_params.get(
+                    "num_predict",
+                    self.config_manager.get("ollama.llm_params.num_predict", -1),
+                ),
             }
         else:
             # Use global defaults
@@ -119,19 +249,34 @@ class MainWindow(QMainWindow):
                 "repeat_penalty": self.config_manager.get(
                     "ollama.llm_params.repeat_penalty", 1.1
                 ),
-                "num_predict": self.config_manager.get("ollama.llm_params.num_predict", -1),
+                "num_predict": self.config_manager.get(
+                    "ollama.llm_params.num_predict", -1
+                ),
             }
-        
+
         # Conversation settings
         if model_settings and "conversation" in model_settings:
             conv_settings = model_settings["conversation"]
             self._conversation_settings_cache = {
-                "use_explicit_history": conv_settings.get("use_explicit_history", 
-                    self.config_manager.get("ollama.conversation.use_explicit_history", False)),
-                "system_prompt": conv_settings.get("system_prompt",
-                    self.config_manager.get("ollama.conversation.system_prompt", "You are a helpful AI assistant.")),
-                "max_history": conv_settings.get("max_history_messages",
-                    self.config_manager.get("ollama.conversation.max_history_messages", 20)),
+                "use_explicit_history": conv_settings.get(
+                    "use_explicit_history",
+                    self.config_manager.get(
+                        "ollama.conversation.use_explicit_history", False
+                    ),
+                ),
+                "system_prompt": conv_settings.get(
+                    "system_prompt",
+                    self.config_manager.get(
+                        "ollama.conversation.system_prompt",
+                        "You are a helpful AI assistant.",
+                    ),
+                ),
+                "max_history": conv_settings.get(
+                    "max_history_messages",
+                    self.config_manager.get(
+                        "ollama.conversation.max_history_messages", 20
+                    ),
+                ),
             }
         else:
             # Use global defaults
@@ -140,7 +285,8 @@ class MainWindow(QMainWindow):
                     "ollama.conversation.use_explicit_history", False
                 ),
                 "system_prompt": self.config_manager.get(
-                    "ollama.conversation.system_prompt", "You are a helpful AI assistant."
+                    "ollama.conversation.system_prompt",
+                    "You are a helpful AI assistant.",
                 ),
                 "max_history": self.config_manager.get(
                     "ollama.conversation.max_history_messages", 20
@@ -264,7 +410,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("locAI - Local AI Assistant")
         self.setGeometry(100, 100, 1200, 800)
         # Allow window to be collapsed to very small size
-        self.setMinimumSize(100, 100)
+        # Set reasonable minimum size to prevent window from collapsing too much
+        self.setMinimumSize(400, 300)
 
         # Set window icon
         self.setWindowIcon(self._create_logo_icon())
@@ -304,6 +451,28 @@ class MainWindow(QMainWindow):
         )
         # Connect stop button
         self.status_panel.stop_clicked.connect(self.on_stop_all_operations)
+
+        # Initialize chat ID and vector store for embedding
+        if self.embedding_enabled:
+            from datetime import datetime
+
+            if not self.current_chat_id:
+                self.current_chat_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+            embedding_store_path = (
+                self.embeddings_dir / f"chat_{self.current_chat_id}.json"
+            )
+            self.chat_vector_store = ChatVectorStore(embedding_store_path)
+
+        # Update semantic memory status indicator
+        if self.embedding_enabled and hasattr(
+            self.status_panel, "update_semantic_memory_status"
+        ):
+            message_count = 0
+            if self.chat_vector_store:
+                stats = self.chat_vector_store.get_stats()
+                message_count = stats.get("total_messages", 0)
+            self.status_panel.update_semantic_memory_status(True, message_count)
+
         # Language change is handled through Settings only
         main_layout.addWidget(self.status_panel)
 
@@ -312,7 +481,9 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.chat_widget, stretch=1)
 
         # Connect chat widget signals
-        self.chat_widget.message_sent.connect(lambda msg, img: self.on_message_sent(msg, img))
+        self.chat_widget.message_sent.connect(
+            lambda msg, img: self.on_message_sent(msg, img)
+        )
         self.chat_widget.image_prompt_sent.connect(self.on_image_prompt_sent)
         self.chat_widget.seed_lock_toggled.connect(self.on_seed_lock_toggled)
         self.chat_widget.text_selected_for_tts.connect(self.on_text_selected_for_tts)
@@ -383,6 +554,13 @@ class MainWindow(QMainWindow):
 
         # Help menu
         help_menu = menubar.addMenu("Help")
+
+        debug_action = QAction("Debug Prompt", self)
+        debug_action.setShortcut("Ctrl+D")
+        debug_action.triggered.connect(self.show_debug_prompt)
+        help_menu.addAction(debug_action)
+
+        help_menu.addSeparator()
 
         about_action = QAction("About", self)
         about_action.triggered.connect(self.show_about)
@@ -459,17 +637,17 @@ class MainWindow(QMainWindow):
         """Handle model selection."""
         self.config_manager.set("ollama.default_model", model_name)
         self.config_manager.save_config()
-        
+
         # Update current model and reload settings for this model
         self._current_model = model_name
         self._cache_config_values(model_name)
-        
+
         self.status_bar.showMessage(f"Selected model: {model_name} - Settings loaded")
 
     def on_stop_all_operations(self):
         """Stop all running operations (Ollama and Image Generation)."""
         stopped_anything = False
-        
+
         # Stop Ollama worker if running
         if hasattr(self, "current_worker") and self.current_worker is not None:
             if self.current_worker.isRunning():
@@ -478,25 +656,31 @@ class MainWindow(QMainWindow):
                 self.current_worker.wait(1000)  # Wait max 1 second
                 self.current_worker = None
                 stopped_anything = True
-                
+
                 # Remove incomplete AI bubble if exists
-                if hasattr(self.chat_widget, "current_ai_bubble") and self.chat_widget.current_ai_bubble is not None:
+                if (
+                    hasattr(self.chat_widget, "current_ai_bubble")
+                    and self.chat_widget.current_ai_bubble is not None
+                ):
                     try:
                         self.chat_widget.current_ai_bubble.setParent(None)
                         self.chat_widget.current_ai_bubble.deleteLater()
                         self.chat_widget.current_ai_bubble = None
                     except:
                         pass
-        
+
         # Stop Image Generation worker if running
-        if hasattr(self, "current_image_worker") and self.current_image_worker is not None:
+        if (
+            hasattr(self, "current_image_worker")
+            and self.current_image_worker is not None
+        ):
             if self.current_image_worker.isRunning():
                 print("Stopping Image Generation worker...")
                 self.current_image_worker.terminate()
                 self.current_image_worker.wait(1000)  # Wait max 1 second
                 self.current_image_worker = None
                 stopped_anything = True
-        
+
         # Always reset context and conversation state when stopping
         # This ensures next prompt starts fresh
         if stopped_anything:
@@ -504,28 +688,33 @@ class MainWindow(QMainWindow):
             # Clear context to force fresh start
             self.current_context = None
             # Remove last incomplete message from history if exists
-            if self.conversation_history and self.conversation_history[-1].get("role") == "user":
+            if (
+                self.conversation_history
+                and self.conversation_history[-1].get("role") == "user"
+            ):
                 # Remove last user message if assistant didn't respond
                 self.conversation_history.pop()
-            
+
             # Reset model tracking
             self.last_used_model = None
             self.last_was_vision = False
-            
+
             print("Unloading all models...")
             if hasattr(self, "ollama_client") and self.ollama_client:
                 try:
                     self.ollama_client.unload_all_models_silent()
                 except Exception as e:
                     print(f"Error unloading Ollama models: {e}")
-            
+
             if hasattr(self, "image_generator") and self.image_generator:
                 try:
                     self.image_generator.unload_model()
                 except Exception as e:
                     print(f"Error unloading image generator: {e}")
-            
-            self.status_bar.showMessage("All operations stopped, context reset, and models unloaded")
+
+            self.status_bar.showMessage(
+                "All operations stopped, context reset, and models unloaded"
+            )
         else:
             self.status_bar.showMessage("No operations to stop")
 
@@ -563,31 +752,40 @@ class MainWindow(QMainWindow):
         is_vision_request = False
         if image_path and os.path.exists(image_path):
             from lokai.core.image_processor import ImageProcessor
+
             processor = ImageProcessor()
             base64_image = processor.image_to_base64(image_path)
             if base64_image:
                 images_base64.append(base64_image)
                 image_size_kb = len(base64_image) / 1024
-                print(f"Image converted to base64: {len(base64_image)} characters ({image_size_kb:.1f} KB)")
+                print(
+                    f"Image converted to base64: {len(base64_image)} characters ({image_size_kb:.1f} KB)"
+                )
                 is_vision_request = True
             else:
                 QMessageBox.warning(
                     self,
                     "Image Conversion Failed",
-                    "Could not convert image to base64. Please try again."
+                    "Could not convert image to base64. Please try again.",
                 )
                 return
 
         # GPU memory management: unload previous model if switching between vision and non-vision
         # or if switching to different model
         if self.last_used_model and self.last_used_model != model:
-            print(f"Model changed from {self.last_used_model} to {model} - unloading previous model...")
+            print(
+                f"Model changed from {self.last_used_model} to {model} - unloading previous model..."
+            )
             self.ollama_client.unload_model(self.last_used_model)
             # Clear context when switching models
             self.current_context = None
-        elif self.last_used_model == model and self.last_was_vision != is_vision_request:
+        elif (
+            self.last_used_model == model and self.last_was_vision != is_vision_request
+        ):
             # Same model but switching between vision and non-vision - unload to free GPU
-            print(f"Switching between vision/non-vision mode - unloading model {model}...")
+            print(
+                f"Switching between vision/non-vision mode - unloading model {model}..."
+            )
             self.ollama_client.unload_model(model)
             # Clear context when switching modes
             self.current_context = None
@@ -597,10 +795,25 @@ class MainWindow(QMainWindow):
         self.last_was_vision = is_vision_request
 
         # Send message to Ollama
-        self.chat_widget.add_user_message(message, image_path=image_path if image_path else None)
+        self.chat_widget.add_user_message(
+            message, image_path=image_path if image_path else None
+        )
 
         # Add to conversation history
+        user_message_index = len(self.conversation_history)
         self.conversation_history.append({"role": "user", "content": message})
+
+        # Embed user message in background (if embedding enabled)
+        if self.embedding_enabled and self.embedding_client and self.chat_vector_store:
+            try:
+                self._embed_message_async(
+                    {"role": "user", "content": message}, user_message_index
+                )
+            except Exception as e:
+                print(f"Error starting embedding worker: {e}")
+                import traceback
+
+                traceback.print_exc()
 
         # Use cached config values (much faster than reading from file each time)
         llm_params = self._llm_params_cache.copy()
@@ -618,12 +831,36 @@ class MainWindow(QMainWindow):
 
         # If sending image, don't use context (vision models work better without context)
         # Send None for context when images are present (like in old code)
-        context_to_use = None if (images_base64 and len(images_base64) > 0) else self.current_context
+        context_to_use = (
+            None if (images_base64 and len(images_base64) > 0) else self.current_context
+        )
         if images_base64 and len(images_base64) > 0:
             print("Image detected - using None context for vision model")
             use_explicit_history = True
-        
-        if use_explicit_history:
+
+        # Use semantic memory if enabled and history is long enough
+        if (
+            self.embedding_enabled
+            and self.embedding_client
+            and self.chat_vector_store
+            and len(self.conversation_history) > self.semantic_memory_threshold
+            and not images_base64
+        ):  # Don't use semantic memory for vision requests
+            try:
+                final_prompt = self._build_prompt_with_semantic_memory(
+                    message, system_prompt, max_history
+                )
+            except Exception as e:
+                print(f"Error building prompt with semantic memory: {e}")
+                import traceback
+
+                traceback.print_exc()
+                # Fallback to normal prompt on error
+                use_explicit_history = True
+                final_prompt = self._build_normal_prompt(
+                    message, system_prompt, max_history
+                )
+        elif use_explicit_history:
             # Build prompt with explicit history (optimized for performance)
             # Pre-allocate list size to avoid reallocations
             history_to_include = self.conversation_history
@@ -665,7 +902,12 @@ class MainWindow(QMainWindow):
         # Create worker thread for non-blocking generation
         # Use context_to_use (None for images, self.current_context otherwise)
         worker = OllamaWorker(
-            self.ollama_client, model, final_prompt, context_to_use, llm_params, images=images_base64 if images_base64 else None
+            self.ollama_client,
+            model,
+            final_prompt,
+            context_to_use,
+            llm_params,
+            images=images_base64 if images_base64 else None,
         )
         # Connect signals - create bubble on first chunk
         worker.chunk_received.connect(self._on_chunk_received)
@@ -682,7 +924,7 @@ class MainWindow(QMainWindow):
         # Reset model tracking when starting new chat
         self.last_used_model = None
         self.last_was_vision = False
-        
+
         reply = QMessageBox.question(
             self,
             "New Chat",
@@ -695,6 +937,20 @@ class MainWindow(QMainWindow):
             self.chat_widget.clear_messages()
             self.current_context = None
             self.conversation_history = []
+
+            # Generate new chat ID and initialize new vector store
+            if self.embedding_enabled:
+                from datetime import datetime
+
+                self.current_chat_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+                embedding_store_path = (
+                    self.embeddings_dir / f"chat_{self.current_chat_id}.json"
+                )
+                self.chat_vector_store = ChatVectorStore(embedding_store_path)
+                # Update status indicator
+                if hasattr(self.status_panel, "update_semantic_memory_status"):
+                    self.status_panel.update_semantic_memory_status(True, 0)
+
             self.status_bar.showMessage("New chat started")
 
     def save_chat(self):
@@ -723,6 +979,7 @@ class MainWindow(QMainWindow):
                     if hasattr(self.status_panel, "model_combo")
                     else None
                 ),
+                "chat_id": self.current_chat_id,  # Save chat ID to link with embeddings
             }
 
             # Save to file
@@ -775,6 +1032,25 @@ class MainWindow(QMainWindow):
             # Reset context when loading chat (cannot reconstruct context from text)
             self.current_context = None
 
+            # Load chat ID from saved chat or generate new one
+            self.current_chat_id = chat_data.get("chat_id", None)
+            if not self.current_chat_id:
+                from datetime import datetime
+
+                self.current_chat_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+            # Load embeddings for this chat if available
+            if self.embedding_enabled:
+                embedding_store_path = (
+                    self.embeddings_dir / f"chat_{self.current_chat_id}.json"
+                )
+                self.chat_vector_store = ChatVectorStore(embedding_store_path)
+                # Update status indicator
+                if hasattr(self.status_panel, "update_semantic_memory_status"):
+                    stats = self.chat_vector_store.get_stats()
+                    message_count = stats.get("total_messages", 0)
+                    self.status_panel.update_semantic_memory_status(True, message_count)
+
             # Load conversation
             conversation = chat_data["conversation"]
             for msg in conversation:
@@ -816,6 +1092,24 @@ class MainWindow(QMainWindow):
                     index = self.status_panel.model_combo.findText(model_name)
                     if index >= 0:
                         self.status_panel.model_combo.setCurrentIndex(index)
+
+            # Re-embed messages if needed (in background)
+            if (
+                self.embedding_enabled
+                and self.embedding_client
+                and self.chat_vector_store
+            ):
+                stats = self.chat_vector_store.get_stats()
+                if (
+                    stats.get("total_messages", 0) == 0
+                    and len(self.conversation_history) > 0
+                ):
+                    # No embeddings found, re-embed all messages
+                    print(
+                        f"Re-embedding {len(self.conversation_history)} messages for loaded chat..."
+                    )
+                    for idx, msg in enumerate(self.conversation_history):
+                        self._embed_message_async(msg, idx)
 
             self.status_bar.showMessage(f"Chat loaded from {Path(file_path).name}")
             QMessageBox.information(
@@ -862,11 +1156,124 @@ class MainWindow(QMainWindow):
             if self._current_model:
                 self._cache_config_values(self._current_model)
             else:
-                default_model = self.config_manager.get("ollama.default_model", "llama3.2")
+                default_model = self.config_manager.get(
+                    "ollama.default_model", "llama3.2"
+                )
                 self._current_model = default_model
                 self._cache_config_values(default_model)
 
+            # Reload embedding components if RAG settings changed
+            self._reload_embedding_components()
+
             self.status_bar.showMessage("Settings saved")
+
+    def show_debug_prompt(self):
+        """Show debug dialog with current prompt."""
+        if not self.conversation_history:
+            QMessageBox.information(
+                self,
+                "Debug Prompt",
+                "No conversation history. Send a message first to see the prompt.",
+            )
+            return
+
+        # Get current model and settings
+        model = (
+            self.status_panel.model_combo.currentText()
+            if hasattr(self.status_panel, "model_combo")
+            else self.config_manager.get("ollama.default_model", "llama3.2")
+        )
+
+        # Get cached config values
+        llm_params = self._llm_params_cache.copy()
+        conv_settings = self._conversation_settings_cache
+
+        system_prompt = conv_settings["system_prompt"]
+        max_history = conv_settings["max_history"]
+        use_explicit_history = conv_settings["use_explicit_history"]
+
+        # Get last message (simulate what would be sent)
+        last_message = self.conversation_history[-1].get("content", "")
+        if not last_message:
+            QMessageBox.information(
+                self, "Debug Prompt", "No message to debug. Send a message first."
+            )
+            return
+
+        # Build prompt using same logic as on_message_sent
+        final_prompt = ""
+        prompt_type = "Normal"
+        included_count = 0
+        semantic_memory_used = False
+        context_used = False
+        context_info = ""
+
+        # Check if we would use context (same logic as on_message_sent)
+        if self.current_context is None and len(self.conversation_history) > 0:
+            use_explicit_history = True
+
+        # Check if semantic memory would be used
+        if (
+            self.embedding_enabled
+            and self.embedding_client
+            and self.chat_vector_store
+            and len(self.conversation_history) > self.semantic_memory_threshold
+        ):
+            try:
+                final_prompt = self._build_prompt_with_semantic_memory(
+                    last_message, system_prompt, max_history
+                )
+                prompt_type = "Semantic Memory"
+                semantic_memory_used = True
+                # Count included messages (approximate)
+                included_count = len(self.conversation_history)
+                context_used = False
+                context_info = "N/A (Semantic Memory uses explicit history in prompt)"
+            except Exception as e:
+                print(f"Error building semantic memory prompt for debug: {e}")
+                # Fallback to normal
+                use_explicit_history = True
+                final_prompt = self._build_normal_prompt(
+                    last_message, system_prompt, max_history
+                )
+                included_count = min(len(self.conversation_history), max_history + 1)
+                context_used = False
+                context_info = "N/A (Explicit history in prompt)"
+        elif use_explicit_history:
+            final_prompt = self._build_normal_prompt(
+                last_message, system_prompt, max_history
+            )
+            included_count = min(len(self.conversation_history), max_history + 1)
+            context_used = False
+            context_info = "N/A (Explicit history in prompt)"
+        else:
+            # Context-based mode - prompt is just current message, history is in context
+            final_prompt = last_message
+            included_count = 1  # Only current message in prompt
+            context_used = True
+            if self.current_context:
+                # Estimate context size (context is list of token IDs)
+                context_size = (
+                    len(self.current_context)
+                    if isinstance(self.current_context, list)
+                    else 0
+                )
+                context_info = f"Context contains ~{context_size} tokens (full conversation history)"
+            else:
+                context_info = "No context yet (first message)"
+
+        # Show debug dialog
+        dialog = DebugDialog(self)
+        dialog.set_prompt_info(
+            prompt=final_prompt,
+            prompt_type=prompt_type,
+            message_count=len(self.conversation_history),
+            included_count=included_count,
+            semantic_memory_enabled=semantic_memory_used,
+            context_used=context_used,
+            context_info=context_info,
+        )
+        dialog.exec()
 
     def show_about(self):
         """Show about dialog."""
@@ -895,21 +1302,171 @@ class MainWindow(QMainWindow):
             print(f"Error in _on_chunk_received: {e}")
             # Don't print full traceback in production - too verbose
 
+    def _embed_message_async(self, message: Dict, index: int):
+        """Embed message in background (non-blocking)."""
+        if (
+            not self.embedding_enabled
+            or not self.embedding_client
+            or not self.chat_vector_store
+        ):
+            return
+
+        worker = EmbeddingWorker(self.embedding_client, message, index)
+        worker.embedding_ready.connect(self._on_embedding_ready)
+        worker.finished.connect(lambda: self._on_embedding_worker_finished(worker))
+        # Store reference to prevent garbage collection
+        self.embedding_workers.append(worker)
+        worker.start()
+
+    def _on_embedding_worker_finished(self, worker):
+        """Callback when embedding worker finishes - remove from list."""
+        try:
+            if worker in self.embedding_workers:
+                self.embedding_workers.remove(worker)
+        except:
+            pass
+
+    def _on_embedding_ready(self, embedding: List[float], message: Dict, index: int):
+        """Callback when embedding is ready."""
+        if self.chat_vector_store:
+            self.chat_vector_store.add_message(message, embedding, index)
+            # Update semantic memory status indicator
+            if hasattr(self.status_panel, "update_semantic_memory_status"):
+                stats = self.chat_vector_store.get_stats()
+                message_count = stats.get("total_messages", 0)
+                self.status_panel.update_semantic_memory_status(True, message_count)
+
+    def _build_prompt_with_semantic_memory(
+        self, current_message: str, system_prompt: str, max_history: int
+    ) -> str:
+        """
+        Build prompt with semantic memory for long conversations.
+        Uses semantic search to find relevant older messages.
+        """
+        # Check if embedding client is available
+        if not self.embedding_client or not self.chat_vector_store:
+            # Fallback to normal prompt if embedding components not available
+            return self._build_normal_prompt(
+                current_message, system_prompt, max_history
+            )
+
+        # 1. Embed current query (with error handling)
+        try:
+            query_embedding = self.embedding_client.generate_embedding(current_message)
+            if not query_embedding:
+                # Fallback to normal prompt if embedding fails
+                print("Warning: Failed to generate embedding, using normal prompt")
+                return self._build_normal_prompt(
+                    current_message, system_prompt, max_history
+                )
+        except Exception as e:
+            print(f"Error generating embedding for semantic search: {e}")
+            # Fallback to normal prompt on error
+            return self._build_normal_prompt(
+                current_message, system_prompt, max_history
+            )
+
+        # 2. Semantic search for relevant older messages
+        relevant_messages = self.chat_vector_store.search(
+            query_embedding,
+            top_k=self.top_k_relevant,
+            exclude_recent=self.recent_messages_count,
+        )
+
+        # 3. Get recent messages (always include last N)
+        recent_messages = self.conversation_history[-self.recent_messages_count : -1]
+
+        # 4. Combine: relevant + recent, then sort by index
+        all_messages = relevant_messages + recent_messages
+        # Remove duplicates (keep first occurrence)
+        seen_indices = set()
+        unique_messages = []
+        for msg in all_messages:
+            msg_index = msg.get("index", len(self.conversation_history))
+            if msg_index not in seen_indices:
+                seen_indices.add(msg_index)
+                unique_messages.append(msg)
+
+        # Sort by index to maintain chronological order
+        unique_messages.sort(key=lambda m: m.get("index", 0))
+
+        # 5. Build prompt
+        prompt_parts = []
+        if system_prompt:
+            prompt_parts.append(system_prompt)
+
+        # Add relevant context from earlier conversation
+        older_messages = [
+            m
+            for m in unique_messages
+            if m.get("index", len(self.conversation_history))
+            < len(self.conversation_history) - self.recent_messages_count
+        ]
+        if older_messages:
+            prompt_parts.append("Relevant context from earlier in conversation:")
+            for msg in older_messages:
+                role = "User" if msg["role"] == "user" else "Assistant"
+                prompt_parts.append(f"{role}: {msg['content']}")
+            prompt_parts.append("")
+
+        # Add recent conversation
+        recent_in_prompt = [
+            m
+            for m in unique_messages
+            if m.get("index", len(self.conversation_history))
+            >= len(self.conversation_history) - self.recent_messages_count
+        ]
+        if recent_in_prompt:
+            prompt_parts.append("Recent conversation:")
+            for msg in recent_in_prompt:
+                role = "User" if msg["role"] == "user" else "Assistant"
+                prompt_parts.append(f"{role}: {msg['content']}")
+
+        # Add current message
+        prompt_parts.append(f"User: {current_message}")
+        prompt_parts.append("Assistant:")
+
+        return "\n\n".join(prompt_parts)
+
+    def _build_normal_prompt(
+        self, current_message: str, system_prompt: str, max_history: int
+    ) -> str:
+        """Build normal prompt without semantic memory (fallback)."""
+        history_to_include = self.conversation_history
+        if max_history > 0:
+            history_to_include = self.conversation_history[-(max_history + 1) : -1]
+
+        prompt_parts = []
+        if system_prompt:
+            prompt_parts.append(system_prompt)
+
+        for msg in history_to_include:
+            role_prefix = "User: " if msg["role"] == "user" else "Assistant: "
+            prompt_parts.append(role_prefix + msg["content"])
+
+        prompt_parts.append(f"User: {current_message}")
+        prompt_parts.append("Assistant:")
+
+        return "\n\n".join(prompt_parts)
+
     def _on_response_finished(self, new_context):
         """Handle response completion."""
         try:
             self.current_context = new_context
-            
+
             # Unload model after response to free GPU memory for next request
             # This prevents GPU memory buildup and ensures fast subsequent requests
             if self.last_used_model:
-                print(f"Model {self.last_used_model} finished - unloading to free GPU memory...")
+                print(
+                    f"Model {self.last_used_model} finished - unloading to free GPU memory..."
+                )
                 self.ollama_client.unload_model(self.last_used_model)
-                
+
                 # Aggressive GPU memory cleanup after unload
                 try:
                     import torch
                     import gc
+
                     if torch.cuda.is_available():
                         torch.cuda.synchronize()
                         for _ in range(5):
@@ -922,11 +1479,11 @@ class MainWindow(QMainWindow):
                         print("GPU memory cleared after model unload")
                 except:
                     pass
-                
+
                 # Clear context after vision model (helps with next request)
                 if self.last_was_vision:
                     self.current_context = None
-            
+
             # Only finish if bubble exists
             if self.chat_widget.current_ai_bubble is not None:
                 # Get the full response text from bubble
@@ -935,9 +1492,20 @@ class MainWindow(QMainWindow):
                 )
                 # Add to conversation history
                 if response_text:
+                    assistant_index = len(self.conversation_history)
                     self.conversation_history.append(
                         {"role": "assistant", "content": response_text}
                     )
+                    # Embed assistant response in background
+                    if (
+                        self.embedding_enabled
+                        and self.embedding_client
+                        and self.chat_vector_store
+                    ):
+                        self._embed_message_async(
+                            {"role": "assistant", "content": response_text},
+                            assistant_index,
+                        )
 
                 # Limit history if needed (use cached value)
                 max_history = self._conversation_settings_cache["max_history"]
@@ -1218,12 +1786,19 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(f"Generating image... {progress}%")
 
     def _create_logo_icon(self) -> QIcon:
-        """Create application logo icon."""
-        # Create pixmap for icon (multiple sizes for better quality)
+        """Create application logo icon from SVG."""
+        # SVG icon data (home/house icon) - white color to match title bar text
+        svg_data = """<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#ffffff"><path d="m480-840 440 330-48 64-72-54v380H160v-380l-72 54-48-64 440-330ZM294-478q0 53 57 113t129 125q72-65 129-125t57-113q0-44-30-73t-72-29q-26 0-47.5 10.5T480-542q-15-17-37.5-27.5T396-580q-42 0-72 29t-30 73Zm426 278v-360L480-740 240-560v360h480Zm0 0H240h480Z"/></svg>"""
+
+        # Create icon
         icon = QIcon()
 
         # Create different sizes: 16x16, 32x32, 48x48, 64x64, 256x256
         sizes = [16, 32, 48, 64, 256]
+
+        # Create SVG renderer
+        svg_bytes = QByteArray(svg_data.encode("utf-8"))
+        renderer = QSvgRenderer(svg_bytes)
 
         for size in sizes:
             pixmap = QPixmap(size, size)
@@ -1232,30 +1807,11 @@ class MainWindow(QMainWindow):
             painter = QPainter(pixmap)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-            # Draw background circle with gradient-like effect
-            # Use primary color from theme
-            primary_color = QColor(74, 158, 255)  # #4A9EFF
-            painter.setBrush(primary_color)
-            painter.setPen(Qt.PenStyle.NoPen)
+            # Render SVG to pixmap - scale to fit the pixmap size
+            # The SVG viewBox is "0 -960 960 960", so we need to scale it properly
+            from PySide6.QtCore import QRectF
 
-            # Draw circle with padding
-            padding = size // 8
-            painter.drawEllipse(
-                padding, padding, size - 2 * padding, size - 2 * padding
-            )
-
-            # Draw "AI" text in white
-            painter.setPen(QColor(255, 255, 255))
-            font = QFont()
-            font.setBold(True)
-            # Scale font size based on icon size
-            font_size = max(8, size // 3)
-            font.setPixelSize(font_size)
-            painter.setFont(font)
-
-            # Center text
-            text = "AI"
-            painter.drawText(0, 0, size, size, Qt.AlignmentFlag.AlignCenter, text)
+            renderer.render(painter, QRectF(0, 0, size, size))
 
             painter.end()
 
@@ -1309,16 +1865,26 @@ class MainWindow(QMainWindow):
                 self.current_worker.terminate()
                 self.current_worker.wait(1000)  # Wait max 1 second
 
+        # Wait for all embedding workers to finish
+        if hasattr(self, "embedding_workers"):
+            for worker in self.embedding_workers[
+                :
+            ]:  # Copy list to avoid modification during iteration
+                if worker.isRunning():
+                    worker.terminate()
+                    worker.wait(500)  # Wait max 0.5 seconds per worker
+            self.embedding_workers.clear()
+
         # Unload all models to free GPU memory before closing
         print("Unloading all models to free GPU memory...")
-        
+
         # Unload Ollama models
         if hasattr(self, "ollama_client") and self.ollama_client:
             try:
                 self.ollama_client.unload_all_models_silent()
             except Exception as e:
                 print(f"Error unloading Ollama models: {e}")
-        
+
         # Unload image generator model
         if hasattr(self, "image_generator") and self.image_generator:
             try:
@@ -1326,17 +1892,17 @@ class MainWindow(QMainWindow):
                     self.image_generator.unload_model()
             except Exception as e:
                 print(f"Error unloading image generator: {e}")
-        
+
         # Force final GPU memory cleanup (aggressive)
         try:
             import torch
             import gc
             import os
-            
+
             # Force garbage collection multiple times
             for _ in range(3):
                 gc.collect()
-            
+
             # Clear CUDA cache if available (very aggressive cleanup)
             if torch.cuda.is_available():
                 # Reset CUDA context to force release of all memory
@@ -1345,26 +1911,26 @@ class MainWindow(QMainWindow):
                     device = torch.cuda.current_device()
                     # Synchronize all operations
                     torch.cuda.synchronize(device)
-                    
+
                     # Multiple cache clears
                     for _ in range(5):
                         torch.cuda.empty_cache()
-                    
+
                     # Try to reset CUDA context (if possible)
                     try:
                         torch.cuda.reset_peak_memory_stats(device)
                     except:
                         pass
-                    
+
                     # Collect IPC resources
                     try:
                         torch.cuda.ipc_collect()
                     except AttributeError:
                         pass
-                    
+
                     # Final garbage collection
                     gc.collect()
-                    
+
                     print("GPU memory cache aggressively cleared")
                 except Exception as e:
                     print(f"Error in aggressive GPU cleanup: {e}")
@@ -1382,7 +1948,43 @@ class MainWindow(QMainWindow):
             self.config_manager.save_config()
         except:
             pass
+
+        # Save embeddings before closing
+        if hasattr(self, "chat_vector_store") and self.chat_vector_store:
+            try:
+                self.chat_vector_store.force_save()
+                print(f"Saved embeddings to {self.chat_vector_store.storage_path}")
+            except Exception as e:
+                print(f"Error saving embeddings on close: {e}")
+
         event.accept()
+
+
+class EmbeddingWorker(QThread):
+    """Worker thread for non-blocking embedding generation."""
+
+    embedding_ready = Signal(list, dict, int)  # embedding, message, index
+
+    def __init__(self, embedding_client, message, index):
+        super().__init__()
+        self.embedding_client = embedding_client
+        self.message = message
+        self.index = index
+        self.setTerminationEnabled(True)  # Allow thread termination
+
+    def run(self):
+        """Run in background thread."""
+        try:
+            embedding = self.embedding_client.generate_embedding(
+                self.message["content"]
+            )
+            if embedding:
+                self.embedding_ready.emit(embedding, self.message, self.index)
+        except Exception as e:
+            print(f"Error generating embedding: {e}")
+        finally:
+            # Ensure thread finishes cleanly
+            pass
 
 
 class OllamaWorker(QThread):

@@ -81,6 +81,10 @@ class SettingsDialog(QDialog):
         self.tts_tab = self.create_tts_tab()
         self.tabs.addTab(self.tts_tab, "TTS")
 
+        # Semantic Memory tab
+        self.rag_tab = self.create_rag_tab()
+        self.tabs.addTab(self.rag_tab, "Semantic Memory")
+
         layout.addWidget(self.tabs)
 
         # Buttons
@@ -580,6 +584,95 @@ class SettingsDialog(QDialog):
 
         tts_group.setLayout(tts_layout)
         layout.addWidget(tts_group)
+
+        layout.addStretch()
+        widget.setLayout(layout)
+        return widget
+
+    def create_rag_tab(self) -> QWidget:
+        """Create Semantic Memory (RAG) settings tab."""
+        widget = QWidget()
+        layout = QVBoxLayout()
+        layout.setSpacing(12)
+
+        # Main RAG group
+        rag_group = QGroupBox("Semantic Memory (RAG)")
+        rag_layout = QFormLayout()
+
+        # Enable/Disable checkbox
+        self.rag_enabled_check = QCheckBox("Enable Semantic Memory")
+        self.rag_enabled_check.setToolTip(
+            "Enable semantic memory to improve context handling in long conversations. "
+            "Uses embeddings to find relevant past messages."
+        )
+        rag_layout.addRow("", self.rag_enabled_check)
+
+        # Embedding model selection
+        self.embedding_model_combo = QComboBox()
+        self.embedding_model_combo.addItems([
+            "nomic-embed-text:v1.5",
+            "nomic-embed-text",
+            "all-minilm",
+            "mxbai-embed-large",
+        ])
+        self.embedding_model_combo.setToolTip(
+            "Embedding model for semantic search. Smaller models use less memory."
+        )
+        rag_layout.addRow("Embedding Model:", self.embedding_model_combo)
+
+        # Force CPU checkbox
+        self.rag_force_cpu_check = QCheckBox("Force CPU (Save GPU Memory)")
+        self.rag_force_cpu_check.setToolTip(
+            "Run embedding model on CPU instead of GPU to save GPU memory for LLM."
+        )
+        rag_layout.addRow("", self.rag_force_cpu_check)
+
+        rag_group.setLayout(rag_layout)
+        layout.addWidget(rag_group)
+
+        # Search parameters group
+        search_group = QGroupBox("Search Parameters")
+        search_layout = QFormLayout()
+
+        # Semantic memory threshold
+        self.semantic_threshold_spin = QSpinBox()
+        self.semantic_threshold_spin.setRange(5, 100)
+        self.semantic_threshold_spin.setValue(30)
+        self.semantic_threshold_spin.setToolTip(
+            "Number of messages before semantic memory activates. "
+            "Lower = activates sooner, Higher = only for very long conversations."
+        )
+        search_layout.addRow("Activation Threshold:", self.semantic_threshold_spin)
+
+        # Top K relevant messages
+        self.top_k_relevant_spin = QSpinBox()
+        self.top_k_relevant_spin.setRange(1, 20)
+        self.top_k_relevant_spin.setValue(5)
+        self.top_k_relevant_spin.setToolTip(
+            "Number of most relevant old messages to include in context."
+        )
+        search_layout.addRow("Top K Relevant Messages:", self.top_k_relevant_spin)
+
+        # Recent messages count
+        self.recent_messages_spin = QSpinBox()
+        self.recent_messages_spin.setRange(5, 50)
+        self.recent_messages_spin.setValue(10)
+        self.recent_messages_spin.setToolTip(
+            "Number of recent messages to always include (in addition to relevant ones)."
+        )
+        search_layout.addRow("Recent Messages Count:", self.recent_messages_spin)
+
+        search_group.setLayout(search_layout)
+        layout.addWidget(search_group)
+
+        # Info label
+        info_label = QLabel(
+            "Semantic memory helps maintain context in long conversations by finding "
+            "relevant past messages using semantic similarity. Embeddings are stored per chat."
+        )
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("color: #888; padding: 8px;")
+        layout.addWidget(info_label)
 
         layout.addStretch()
         widget.setLayout(layout)
@@ -1253,6 +1346,31 @@ class SettingsDialog(QDialog):
         if index >= 0:
             self.voice_combo.setCurrentIndex(index)
 
+        # RAG/Semantic Memory settings
+        rag_enabled = self.config_manager.get("rag.enabled", False)
+        self.rag_enabled_check.setChecked(rag_enabled)
+
+        embedding_model = self.config_manager.get("rag.embedding_model", "nomic-embed-text:v1.5")
+        index = self.embedding_model_combo.findText(embedding_model)
+        if index >= 0:
+            self.embedding_model_combo.setCurrentIndex(index)
+        else:
+            # If model not in list, add it
+            self.embedding_model_combo.addItem(embedding_model)
+            self.embedding_model_combo.setCurrentText(embedding_model)
+
+        rag_force_cpu = self.config_manager.get("rag.force_cpu", True)
+        self.rag_force_cpu_check.setChecked(rag_force_cpu)
+
+        semantic_threshold = self.config_manager.get("rag.semantic_memory_threshold", 30)
+        self.semantic_threshold_spin.setValue(semantic_threshold)
+
+        top_k_relevant = self.config_manager.get("rag.top_k_relevant", 5)
+        self.top_k_relevant_spin.setValue(top_k_relevant)
+
+        recent_messages = self.config_manager.get("rag.recent_messages_count", 10)
+        self.recent_messages_spin.setValue(recent_messages)
+
         # Speed
         speed = self.config_manager.get("tts.speed", 1.0)
         self.speed_spin.setValue(speed)
@@ -1415,6 +1533,14 @@ class SettingsDialog(QDialog):
         self.config_manager.set("tts.voice", self.voice_combo.currentText())
         self.config_manager.set("tts.speed", self.speed_spin.value())
         self.config_manager.set("tts.auto_speak", self.auto_speak_check.isChecked())
+
+        # RAG/Semantic Memory settings
+        self.config_manager.set("rag.enabled", self.rag_enabled_check.isChecked())
+        self.config_manager.set("rag.embedding_model", self.embedding_model_combo.currentText())
+        self.config_manager.set("rag.force_cpu", self.rag_force_cpu_check.isChecked())
+        self.config_manager.set("rag.semantic_memory_threshold", self.semantic_threshold_spin.value())
+        self.config_manager.set("rag.top_k_relevant", self.top_k_relevant_spin.value())
+        self.config_manager.set("rag.recent_messages_count", self.recent_messages_spin.value())
 
         # Image Generation
         self.config_manager.set(

@@ -81,6 +81,14 @@
       "type": "base"
     }
   },
+  "rag": {
+    "enabled": true,
+    "embedding_model": "nomic-embed-text:v1.5",
+    "force_cpu": true,
+    "semantic_memory_threshold": 30,
+    "top_k_relevant": 5,
+    "recent_messages_count": 10
+  },
   "first_run": true
 }
 
