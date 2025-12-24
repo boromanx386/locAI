@@ -364,6 +364,18 @@ class SettingsDialog(QDialog):
         )
         image_layout.addRow("", self.auto_apply_check)
 
+        # Sequential CPU offload checkbox
+        self.cpu_offload_check = QCheckBox(
+            "Use Sequential CPU Offload (Save GPU Memory)"
+        )
+        self.cpu_offload_check.setToolTip(
+            "Enable sequential CPU offload to minimize GPU VRAM usage. "
+            "Model components are moved between CPU and GPU as needed. "
+            "Recommended for GPUs with limited VRAM (8GB or less). "
+            "Disable for faster generation if you have enough GPU memory."
+        )
+        image_layout.addRow("", self.cpu_offload_check)
+
         self.image_width_spin = QSpinBox()
         self.image_width_spin.setRange(256, 2048)
         self.image_width_spin.setValue(1024)
@@ -609,12 +621,14 @@ class SettingsDialog(QDialog):
 
         # Embedding model selection
         self.embedding_model_combo = QComboBox()
-        self.embedding_model_combo.addItems([
-            "nomic-embed-text:v1.5",
-            "nomic-embed-text",
-            "all-minilm",
-            "mxbai-embed-large",
-        ])
+        self.embedding_model_combo.addItems(
+            [
+                "nomic-embed-text:v1.5",
+                "nomic-embed-text",
+                "all-minilm",
+                "mxbai-embed-large",
+            ]
+        )
         self.embedding_model_combo.setToolTip(
             "Embedding model for semantic search. Smaller models use less memory."
         )
@@ -1248,34 +1262,51 @@ class SettingsDialog(QDialog):
 
         # Get current model from parent (MainWindow) if available
         current_model = None
-        if self.parent() and hasattr(self.parent(), '_current_model'):
+        if self.parent() and hasattr(self.parent(), "_current_model"):
             current_model = self.parent()._current_model
-        
+
         # If no current model, use default model
         if not current_model:
             current_model = self.config_manager.get("ollama.default_model", "llama3.2")
-        
+
         # Try to load model-specific settings first
         model_settings = self.config_manager.get_llm_model_setting(current_model)
-        
+
         # LLM Parameters - use model-specific or fall back to global defaults
         if model_settings and "llm_params" in model_settings:
             llm_params = model_settings["llm_params"]
-            num_ctx = llm_params.get("num_ctx", self.config_manager.get("ollama.llm_params.num_ctx", 4096))
-            temperature = llm_params.get("temperature", self.config_manager.get("ollama.llm_params.temperature", 0.7))
-            top_p = llm_params.get("top_p", self.config_manager.get("ollama.llm_params.top_p", 0.9))
-            top_k = llm_params.get("top_k", self.config_manager.get("ollama.llm_params.top_k", 40))
-            repeat_penalty = llm_params.get("repeat_penalty", self.config_manager.get("ollama.llm_params.repeat_penalty", 1.1))
-            num_predict = llm_params.get("num_predict", self.config_manager.get("ollama.llm_params.num_predict", -1))
+            num_ctx = llm_params.get(
+                "num_ctx", self.config_manager.get("ollama.llm_params.num_ctx", 4096)
+            )
+            temperature = llm_params.get(
+                "temperature",
+                self.config_manager.get("ollama.llm_params.temperature", 0.7),
+            )
+            top_p = llm_params.get(
+                "top_p", self.config_manager.get("ollama.llm_params.top_p", 0.9)
+            )
+            top_k = llm_params.get(
+                "top_k", self.config_manager.get("ollama.llm_params.top_k", 40)
+            )
+            repeat_penalty = llm_params.get(
+                "repeat_penalty",
+                self.config_manager.get("ollama.llm_params.repeat_penalty", 1.1),
+            )
+            num_predict = llm_params.get(
+                "num_predict",
+                self.config_manager.get("ollama.llm_params.num_predict", -1),
+            )
         else:
             # Use global defaults
             num_ctx = self.config_manager.get("ollama.llm_params.num_ctx", 4096)
             temperature = self.config_manager.get("ollama.llm_params.temperature", 0.7)
             top_p = self.config_manager.get("ollama.llm_params.top_p", 0.9)
             top_k = self.config_manager.get("ollama.llm_params.top_k", 40)
-            repeat_penalty = self.config_manager.get("ollama.llm_params.repeat_penalty", 1.1)
+            repeat_penalty = self.config_manager.get(
+                "ollama.llm_params.repeat_penalty", 1.1
+            )
             num_predict = self.config_manager.get("ollama.llm_params.num_predict", -1)
-        
+
         self.context_window_spin.setValue(num_ctx)
         self.temperature_spin.setValue(temperature)
         self.top_p_spin.setValue(top_p)
@@ -1286,12 +1317,23 @@ class SettingsDialog(QDialog):
         # Conversation Settings - use model-specific or fall back to global defaults
         if model_settings and "conversation" in model_settings:
             conv_settings = model_settings["conversation"]
-            system_prompt = conv_settings.get("system_prompt", 
-                self.config_manager.get("ollama.conversation.system_prompt", "You are a helpful AI assistant."))
-            max_history = conv_settings.get("max_history_messages",
-                self.config_manager.get("ollama.conversation.max_history_messages", 20))
-            use_explicit = conv_settings.get("use_explicit_history",
-                self.config_manager.get("ollama.conversation.use_explicit_history", False))
+            system_prompt = conv_settings.get(
+                "system_prompt",
+                self.config_manager.get(
+                    "ollama.conversation.system_prompt",
+                    "You are a helpful AI assistant.",
+                ),
+            )
+            max_history = conv_settings.get(
+                "max_history_messages",
+                self.config_manager.get("ollama.conversation.max_history_messages", 20),
+            )
+            use_explicit = conv_settings.get(
+                "use_explicit_history",
+                self.config_manager.get(
+                    "ollama.conversation.use_explicit_history", False
+                ),
+            )
         else:
             # Use global defaults
             system_prompt = self.config_manager.get(
@@ -1303,7 +1345,7 @@ class SettingsDialog(QDialog):
             use_explicit = self.config_manager.get(
                 "ollama.conversation.use_explicit_history", False
             )
-        
+
         self.system_prompt_edit.setPlainText(system_prompt)
         self.max_history_spin.setValue(max_history)
         self.explicit_history_check.setChecked(use_explicit)
@@ -1350,7 +1392,9 @@ class SettingsDialog(QDialog):
         rag_enabled = self.config_manager.get("rag.enabled", False)
         self.rag_enabled_check.setChecked(rag_enabled)
 
-        embedding_model = self.config_manager.get("rag.embedding_model", "nomic-embed-text:v1.5")
+        embedding_model = self.config_manager.get(
+            "rag.embedding_model", "nomic-embed-text:v1.5"
+        )
         index = self.embedding_model_combo.findText(embedding_model)
         if index >= 0:
             self.embedding_model_combo.setCurrentIndex(index)
@@ -1362,7 +1406,9 @@ class SettingsDialog(QDialog):
         rag_force_cpu = self.config_manager.get("rag.force_cpu", True)
         self.rag_force_cpu_check.setChecked(rag_force_cpu)
 
-        semantic_threshold = self.config_manager.get("rag.semantic_memory_threshold", 30)
+        semantic_threshold = self.config_manager.get(
+            "rag.semantic_memory_threshold", 30
+        )
         self.semantic_threshold_spin.setValue(semantic_threshold)
 
         top_k_relevant = self.config_manager.get("rag.top_k_relevant", 5)
@@ -1432,6 +1478,12 @@ class SettingsDialog(QDialog):
         auto_apply = self.config_manager.get_auto_apply_presets()
         self.auto_apply_check.setChecked(auto_apply)
 
+        # Sequential CPU offload
+        use_cpu_offload = self.config_manager.get(
+            "image_gen.use_sequential_cpu_offload", True
+        )
+        self.cpu_offload_check.setChecked(use_cpu_offload)
+
         # Update preset info
         self.update_preset_info()
 
@@ -1449,13 +1501,13 @@ class SettingsDialog(QDialog):
 
         # Get current model from parent (MainWindow) if available
         current_model = None
-        if self.parent() and hasattr(self.parent(), '_current_model'):
+        if self.parent() and hasattr(self.parent(), "_current_model"):
             current_model = self.parent()._current_model
-        
+
         # If no current model, use default model
         if not current_model:
             current_model = self.config_manager.get("ollama.default_model", "llama3.2")
-        
+
         # Save LLM Parameters - save to model-specific settings if model is set
         llm_params = {
             "num_ctx": self.context_window_spin.value(),
@@ -1465,21 +1517,21 @@ class SettingsDialog(QDialog):
             "repeat_penalty": self.repeat_penalty_spin.value(),
             "num_predict": self.max_tokens_spin.value(),
         }
-        
+
         # Conversation Settings
         conversation_settings = {
             "system_prompt": self.system_prompt_edit.toPlainText(),
             "max_history_messages": self.max_history_spin.value(),
             "use_explicit_history": self.explicit_history_check.isChecked(),
         }
-        
+
         # Save to model-specific settings
         model_settings = {
             "llm_params": llm_params,
             "conversation": conversation_settings,
         }
         self.config_manager.set_llm_model_setting(current_model, model_settings)
-        
+
         # Also save as global defaults (for backward compatibility and new models)
         self.config_manager.set(
             "ollama.llm_params.num_ctx", self.context_window_spin.value()
@@ -1536,11 +1588,17 @@ class SettingsDialog(QDialog):
 
         # RAG/Semantic Memory settings
         self.config_manager.set("rag.enabled", self.rag_enabled_check.isChecked())
-        self.config_manager.set("rag.embedding_model", self.embedding_model_combo.currentText())
+        self.config_manager.set(
+            "rag.embedding_model", self.embedding_model_combo.currentText()
+        )
         self.config_manager.set("rag.force_cpu", self.rag_force_cpu_check.isChecked())
-        self.config_manager.set("rag.semantic_memory_threshold", self.semantic_threshold_spin.value())
+        self.config_manager.set(
+            "rag.semantic_memory_threshold", self.semantic_threshold_spin.value()
+        )
         self.config_manager.set("rag.top_k_relevant", self.top_k_relevant_spin.value())
-        self.config_manager.set("rag.recent_messages_count", self.recent_messages_spin.value())
+        self.config_manager.set(
+            "rag.recent_messages_count", self.recent_messages_spin.value()
+        )
 
         # Image Generation
         self.config_manager.set(
@@ -1558,6 +1616,9 @@ class SettingsDialog(QDialog):
         self.config_manager.set("image_gen.lora_model", self.lora_combo.currentText())
         self.config_manager.set("image_gen.lora_weight", self.lora_weight_spin.value())
         self.config_manager.set_auto_apply_presets(self.auto_apply_check.isChecked())
+        self.config_manager.set(
+            "image_gen.use_sequential_cpu_offload", self.cpu_offload_check.isChecked()
+        )
 
         # Save config
         self.config_manager.save_config()

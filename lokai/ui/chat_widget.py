@@ -832,6 +832,10 @@ class ChatWidget(QWidget):
                 """
                 )
 
+    def set_send_enabled(self, enabled: bool):
+        """Enable or disable send button."""
+        self.send_btn.setEnabled(enabled)
+
     def send_message(self):
         """Send message from input field."""
         message = self.input_field.toPlainText().strip()

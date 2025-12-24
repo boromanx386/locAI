@@ -44,7 +44,8 @@
     "height": 1024,
     "steps": 50,
     "guidance_scale": 7.5,
-    "auto_apply_presets": true
+    "auto_apply_presets": true,
+    "use_sequential_cpu_offload": true
   },
   "model_presets": {
     "stabilityai/stable-diffusion-xl-base-1.0": {

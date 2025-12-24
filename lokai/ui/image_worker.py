@@ -62,7 +62,14 @@ class ImageGenerationWorker(QThread):
                 # Unload LoRAs when model changes (LoRAs are model-specific)
                 if self.image_generator.active_loras:
                     self.image_generator.unload_all_loras()
-                self.image_generator.load_model(model_name)
+
+                # Get sequential CPU offload setting from config
+                use_cpu_offload = self.config_manager.get(
+                    "image_gen.use_sequential_cpu_offload", True
+                )
+                self.image_generator.load_model(
+                    model_name, use_sequential_cpu_offload=use_cpu_offload
+                )
                 self.progress_updated.emit(30)
 
             # Load LoRA if specified (optimized - only load if different from current)

@@ -715,8 +715,12 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(
                 "All operations stopped, context reset, and models unloaded"
             )
+            # Re-enable send button
+            self.chat_widget.set_send_enabled(True)
         else:
             self.status_bar.showMessage("No operations to stop")
+            # Ensure send button is enabled
+            self.chat_widget.set_send_enabled(True)
 
     def on_message_sent(self, message: str, image_path: str = ""):
         """Handle message sent from chat widget."""
@@ -917,6 +921,8 @@ class MainWindow(QMainWindow):
         self.current_worker = worker
         worker.finished.connect(lambda: setattr(self, "current_worker", None))
         worker.error_occurred.connect(lambda: setattr(self, "current_worker", None))
+        # Disable send button while generating
+        self.chat_widget.set_send_enabled(False)
         worker.start()
 
     def new_chat(self):
@@ -1531,6 +1537,8 @@ class MainWindow(QMainWindow):
                 self.chat_widget.start_ai_message()
                 self.chat_widget.append_ai_chunk("No response received from model.")
                 self.chat_widget.finish_ai_message()
+            # Re-enable send button
+            self.chat_widget.set_send_enabled(True)
         except Exception as e:
             print(f"Error in _on_response_finished: {e}")
             import traceback
@@ -1541,6 +1549,8 @@ class MainWindow(QMainWindow):
                     self.chat_widget.finish_ai_message()
             except:
                 pass
+            # Re-enable send button even on error
+            self.chat_widget.set_send_enabled(True)
 
     def _on_response_error(self, error: str):
         """Handle response error."""
@@ -1555,6 +1565,8 @@ class MainWindow(QMainWindow):
             # Hide status indicator on error
             if hasattr(self.chat_widget, "status_indicator"):
                 self.chat_widget.status_indicator.setVisible(False)
+            # Re-enable send button
+            self.chat_widget.set_send_enabled(True)
         except Exception as e:
             print(f"Error in _on_response_error: {e}")
             import traceback
@@ -1565,6 +1577,8 @@ class MainWindow(QMainWindow):
                     self.chat_widget.finish_ai_message()
             except:
                 pass
+            # Re-enable send button even on error
+            self.chat_widget.set_send_enabled(True)
 
     def on_seed_lock_toggled(self, locked: bool):
         """Handle seed lock toggle from chat widget."""
@@ -1718,6 +1732,8 @@ class MainWindow(QMainWindow):
         worker.progress_updated.connect(self._on_image_progress)
         self.current_image_worker = worker
         worker.finished.connect(lambda: setattr(self, "current_image_worker", None))
+        # Disable send button while generating
+        self.chat_widget.set_send_enabled(False)
         worker.start()
 
     def _on_image_generated(self, image_path: str):
@@ -1733,9 +1749,13 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(
                 f"Image generated: {os.path.basename(image_path)}"
             )
+            # Re-enable send button
+            self.chat_widget.set_send_enabled(True)
         except Exception as e:
             print(f"Error displaying image: {e}")
             QMessageBox.warning(self, "Error", f"Error displaying image: {e}")
+            # Re-enable send button even on error
+            self.chat_widget.set_send_enabled(True)
 
     def on_text_selected_for_tts(self, text: str):
         """Handle text selection for TTS."""
@@ -1780,6 +1800,8 @@ class MainWindow(QMainWindow):
         """Handle image generation error."""
         self.chat_widget.add_user_message(f"[Error generating image: {error}]")
         QMessageBox.warning(self, "Image Generation Error", error)
+        # Re-enable send button
+        self.chat_widget.set_send_enabled(True)
 
     def _on_image_progress(self, progress: int):
         """Handle image generation progress."""

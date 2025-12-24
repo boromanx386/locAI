@@ -6,7 +6,6 @@ Pillow>=9.0.0
 torch>=2.0.0
 diffusers>=0.35.0
 transformers>=4.56.0
-accelerate>=1.10.0
 peft>=0.7.0
 keyboard>=0.13.5
 numpy>=1.24.0

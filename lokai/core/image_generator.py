@@ -64,12 +64,17 @@ class ImageGenerator:
         """Check if image generation is available."""
         return DIFFUSERS_AVAILABLE and self.device is not None
 
-    def load_model(self, model_name: str = "stabilityai/stable-diffusion-xl-base-1.0"):
+    def load_model(
+        self,
+        model_name: str = "stabilityai/stable-diffusion-xl-base-1.0",
+        use_sequential_cpu_offload: bool = True,
+    ):
         """
         Load Stable Diffusion model.
 
         Args:
             model_name: Model name (Hugging Face ID) or path to .safetensors file
+            use_sequential_cpu_offload: If True, enable sequential CPU offload for memory efficiency
         """
         if not self.is_available():
             raise RuntimeError(
@@ -131,10 +136,15 @@ class ImageGenerator:
             # Note: If using sequential CPU offload, don't use .to() as it conflicts
             # Sequential offload manages device automatically
             if self.device == "cuda":
-                # Enable sequential CPU offload for memory efficiency
-                # This automatically manages device placement
-                self.pipeline.enable_sequential_cpu_offload()
-                print("Sequential CPU offload enabled")
+                if use_sequential_cpu_offload:
+                    # Enable sequential CPU offload for memory efficiency
+                    # This automatically manages device placement
+                    self.pipeline.enable_sequential_cpu_offload()
+                    print("Sequential CPU offload enabled")
+                else:
+                    # Move entire pipeline to GPU (uses more VRAM but faster)
+                    self.pipeline = self.pipeline.to(self.device)
+                    print("Pipeline loaded directly to GPU (no CPU offload)")
             else:
                 # For CPU, just move to device
                 self.pipeline = self.pipeline.to(self.device)
@@ -273,24 +283,26 @@ class ImageGenerator:
             if torch.cuda.is_available():
                 try:
                     device = torch.cuda.current_device()
-                    torch.cuda.synchronize(device)  # Wait for all operations to complete
-                    
+                    torch.cuda.synchronize(
+                        device
+                    )  # Wait for all operations to complete
+
                     # Multiple cache clears
                     for _ in range(5):
                         torch.cuda.empty_cache()
-                    
+
                     # Reset peak memory stats
                     try:
                         torch.cuda.reset_peak_memory_stats(device)
                     except:
                         pass
-                    
+
                     # Collect IPC resources
                     try:
                         torch.cuda.ipc_collect()  # Collect IPC resources if available
                     except AttributeError:
                         pass
-                    
+
                     # Final garbage collection
                     gc.collect()
                 except Exception as e:
