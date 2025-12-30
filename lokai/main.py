@@ -7,12 +7,22 @@ import os
 from pathlib import Path
 
 # Set Hugging Face cache environment variables BEFORE importing anything
-# For image models, use Q: drive if available
-# DO NOT TOUCH HF_HUB_CACHE - let it use default location where voice files are
+# For all models, use Q: drive if available
+# IMPORTANT: These must be set BEFORE any huggingface imports
 if os.path.exists("Q:\\"):
     hf_cache = "Q:\\huggingface_cache"
-    os.environ.setdefault("DIFFUSERS_CACHE", os.path.join(hf_cache, "diffusers"))
-    os.environ.setdefault("HF_DIFFUSERS_CACHE", os.path.join(hf_cache, "diffusers"))
+    # Force set (not setdefault) to override any existing values
+    os.environ["HF_HOME"] = hf_cache
+    os.environ["HF_HUB_CACHE"] = hf_cache
+    os.environ["TRANSFORMERS_CACHE"] = hf_cache
+    os.environ["HF_DATASETS_CACHE"] = hf_cache
+    os.environ["DIFFUSERS_CACHE"] = os.path.join(hf_cache, "diffusers")
+    os.environ["HF_DIFFUSERS_CACHE"] = os.path.join(hf_cache, "diffusers")
+    # Also set HF_HUB_DISABLE_SYMLINKS_WARNING to suppress warnings
+    os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+    print(f"[MAIN] Using Q: drive for Hugging Face cache: {hf_cache}")
+    print(f"[MAIN] HF_HUB_CACHE={os.environ.get('HF_HUB_CACHE')}")
+    print(f"[MAIN] DIFFUSERS_CACHE={os.environ.get('DIFFUSERS_CACHE')}")
 
 # Add parent directory to path so we can import lokai
 # This allows running from both the lokai/ directory and parent directory

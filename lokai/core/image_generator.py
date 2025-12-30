@@ -82,6 +82,26 @@ class ImageGenerator:
             )
 
         if self.current_model == model_name and self.pipeline is not None:
+            # Model already loaded, but might be on CPU - move to GPU if needed
+            if self.device == "cuda" and use_sequential_cpu_offload:
+                # If sequential CPU offload is enabled, just enable it (model stays in memory)
+                try:
+                    if hasattr(self.pipeline, "enable_sequential_cpu_offload"):
+                        self.pipeline.enable_sequential_cpu_offload()
+                except:
+                    pass
+            elif self.device == "cuda":
+                # Check if model is on CPU and move to GPU
+                try:
+                    # Try to detect if model is on CPU by checking first component
+                    if (
+                        hasattr(self.pipeline, "unet")
+                        and next(self.pipeline.unet.parameters()).device.type == "cpu"
+                    ):
+                        self.pipeline = self.pipeline.to(self.device)
+                        print("Model moved from CPU to GPU")
+                except:
+                    pass
             return  # Already loaded
 
         print(f"Loading model: {model_name}")
@@ -94,43 +114,55 @@ class ImageGenerator:
                 from diffusers import StableDiffusionXLPipeline, StableDiffusionPipeline
 
                 # Try XL first, fallback to base if it fails
+                # Use float16 for faster inference and VAE decoding
                 try:
                     self.pipeline = StableDiffusionXLPipeline.from_single_file(
                         model_name,
-                        torch_dtype=torch.float32,  # Use float32 for compatibility
+                        torch_dtype=torch.float16,  # Use float16 for faster inference and VAE decoding
                         use_safetensors=True,
                     )
-                    print("Loaded as SDXL model")
+                    print("Loaded as SDXL model (float16)")
                 except Exception as e:
                     print(f"Failed to load as SDXL, trying base model: {e}")
                     self.pipeline = StableDiffusionPipeline.from_single_file(
                         model_name,
-                        torch_dtype=torch.float32,
+                        torch_dtype=torch.float16,
                         use_safetensors=True,
                     )
-                    print("Loaded as base SD model")
+                    print("Loaded as base SD model (float16)")
             else:
                 # Load from Hugging Face or local diffusers format
                 # Try XL first, fallback to base if it fails
                 try:
                     from diffusers import StableDiffusionXLPipeline
 
-                    self.pipeline = StableDiffusionXLPipeline.from_pretrained(
-                        model_name,
-                        torch_dtype=torch.float32,  # Use float32 for compatibility
-                        use_safetensors=True,
-                    )
-                    print("Loaded as SDXL model")
+                    # Try with fp16 variant first (optimized VAE)
+                    try:
+                        self.pipeline = StableDiffusionXLPipeline.from_pretrained(
+                            model_name,
+                            torch_dtype=torch.float16,
+                            use_safetensors=True,
+                            variant="fp16",  # Use FP16 variant if available (optimized VAE)
+                        )
+                        print("Loaded as SDXL model (float16, fp16 variant)")
+                    except Exception as e:
+                        # Fallback: load without variant
+                        self.pipeline = StableDiffusionXLPipeline.from_pretrained(
+                            model_name,
+                            torch_dtype=torch.float16,
+                            use_safetensors=True,
+                        )
+                        print("Loaded as SDXL model (float16)")
                 except Exception as e:
                     print(f"Failed to load as SDXL, trying base model: {e}")
                     from diffusers import StableDiffusionPipeline
 
                     self.pipeline = StableDiffusionPipeline.from_pretrained(
                         model_name,
-                        torch_dtype=torch.float32,
+                        torch_dtype=torch.float16,
                         use_safetensors=True,
                     )
-                    print("Loaded as base SD model")
+                    print("Loaded as base SD model (float16)")
 
             # Move to device
             # Note: If using sequential CPU offload, don't use .to() as it conflicts
@@ -145,6 +177,28 @@ class ImageGenerator:
                     # Move entire pipeline to GPU (uses more VRAM but faster)
                     self.pipeline = self.pipeline.to(self.device)
                     print("Pipeline loaded directly to GPU (no CPU offload)")
+
+                # Optimize VAE for faster decoding
+                if hasattr(self.pipeline, "vae"):
+                    try:
+                        # Ensure VAE is on GPU
+                        self.pipeline.vae = self.pipeline.vae.to(self.device)
+
+                        # Ensure VAE is in float16 (should already be if model loaded in float16)
+                        vae_dtype = next(self.pipeline.vae.parameters()).dtype
+                        if vae_dtype != torch.float16:
+                            self.pipeline.vae = self.pipeline.vae.to(
+                                dtype=torch.float16
+                            )
+                            print("VAE converted to float16")
+
+                        # Disable slicing/tiling for faster decoding
+                        if hasattr(self.pipeline.vae, "disable_slicing"):
+                            self.pipeline.vae.disable_slicing()
+                        if hasattr(self.pipeline.vae, "disable_tiling"):
+                            self.pipeline.vae.disable_tiling()
+                    except Exception as e:
+                        print(f"Warning: Could not optimize VAE: {e}")
             else:
                 # For CPU, just move to device
                 self.pipeline = self.pipeline.to(self.device)
@@ -195,6 +249,24 @@ class ImageGenerator:
             except Exception as e:
                 print(f"Cannot load model: {e}")
                 return None
+
+        # If model is on CPU, move to GPU before generation (if using GPU and not sequential offload)
+        if self.device == "cuda":
+            try:
+                # Check if model is on CPU by checking first component
+                if hasattr(self.pipeline, "unet"):
+                    first_param = next(self.pipeline.unet.parameters())
+                    if first_param.device.type == "cpu":
+                        # Check if sequential CPU offload is enabled - if so, don't move manually
+                        # Sequential offload will handle device placement automatically during generation
+                        sequential_offload_enabled = getattr(
+                            self.pipeline, "_sequential_cpu_offload_enabled", False
+                        )
+                        if not sequential_offload_enabled:
+                            self.pipeline = self.pipeline.to(self.device)
+                            print("Model moved from CPU to GPU for generation")
+            except Exception as e:
+                print(f"Warning: Could not check/move model device: {e}")
 
         try:
             # Generator for reproducibility
@@ -276,7 +348,7 @@ class ImageGenerator:
             # Force garbage collection (multiple times)
             import gc
 
-            for _ in range(3):
+            for _ in range(5):
                 gc.collect()
 
             # Clear CUDA cache if available (aggressive cleanup)
@@ -287,8 +359,8 @@ class ImageGenerator:
                         device
                     )  # Wait for all operations to complete
 
-                    # Multiple cache clears
-                    for _ in range(5):
+                    # Multiple cache clears (increased from 5 to 10 for better cleanup)
+                    for _ in range(10):
                         torch.cuda.empty_cache()
 
                     # Reset peak memory stats
@@ -303,18 +375,107 @@ class ImageGenerator:
                     except AttributeError:
                         pass
 
+                    # Additional cleanup passes
+                    for _ in range(3):
+                        gc.collect()
+                        torch.cuda.empty_cache()
+
                     # Final garbage collection
                     gc.collect()
                 except Exception as e:
                     print(f"Error in GPU cleanup: {e}")
-                    # Fallback
+                    # Fallback - more aggressive
                     try:
-                        torch.cuda.empty_cache()
-                        gc.collect()
+                        for _ in range(5):
+                            torch.cuda.empty_cache()
+                            gc.collect()
                     except:
                         pass
 
             print("Model unloaded and GPU memory freed")
+
+    def clear_gpu_memory(self):
+        """Clear GPU memory without unloading the model (moves to CPU)."""
+        if self.pipeline is None:
+            return
+
+        try:
+            # Disable sequential CPU offload if enabled (to manually control device)
+            if hasattr(self.pipeline, "disable_sequential_cpu_offload"):
+                try:
+                    self.pipeline.disable_sequential_cpu_offload()
+                except:
+                    pass
+
+            # Move pipeline to CPU to free GPU memory (but keep model loaded)
+            # Note: If pipeline is in float16, it cannot run on CPU
+            if hasattr(self.pipeline, "to"):
+                try:
+                    # Check if pipeline is in float16
+                    pipeline_is_float16 = False
+                    if hasattr(self.pipeline, "vae"):
+                        try:
+                            first_param = next(self.pipeline.vae.parameters())
+                            if first_param.dtype == torch.float16:
+                                pipeline_is_float16 = True
+                        except:
+                            pass
+
+                    if not pipeline_is_float16:
+                        # Pipeline is not in float16, can move to CPU
+                        self.pipeline = self.pipeline.to("cpu")
+                        print("Image model moved to CPU to free GPU memory")
+                    else:
+                        # Pipeline is in float16, keep on GPU (float16 doesn't work on CPU)
+                        print(
+                            "Image model kept on GPU (float16 doesn't work on CPU), clearing GPU cache only"
+                        )
+                except Exception as e:
+                    print(f"Error moving model to CPU: {e}")
+
+            # Aggressive GPU memory cleanup
+            import gc
+
+            if torch.cuda.is_available():
+                try:
+                    device = torch.cuda.current_device()
+                    torch.cuda.synchronize(device)
+
+                    # Multiple cache clears
+                    for _ in range(10):
+                        torch.cuda.empty_cache()
+
+                    # Reset peak memory stats
+                    try:
+                        torch.cuda.reset_peak_memory_stats(device)
+                    except:
+                        pass
+
+                    # Collect IPC resources
+                    try:
+                        torch.cuda.ipc_collect()
+                    except AttributeError:
+                        pass
+
+                    # Additional cleanup passes
+                    for _ in range(3):
+                        gc.collect()
+                        torch.cuda.empty_cache()
+
+                    # Final garbage collection
+                    gc.collect()
+                    print("GPU memory cleared")
+                except Exception as e:
+                    print(f"Error in GPU cleanup: {e}")
+                    # Fallback
+                    try:
+                        for _ in range(5):
+                            torch.cuda.empty_cache()
+                            gc.collect()
+                    except:
+                        pass
+        except Exception as e:
+            print(f"Error clearing GPU memory: {e}")
 
     def load_lora(self, lora_path: str, weight: float = 1.0) -> bool:
         """

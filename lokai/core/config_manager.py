@@ -79,7 +79,8 @@ class ConfigManager:
             "models": {"storage_path": None, "auto_download": False},
             "ui": {"theme": "dark", "font_size": 14, "compact_mode": False},
             "tts": {"enabled": True, "voice": "en-US-AriaNeural", "auto_speak": False},
-            "image_gen": {"enabled": False, "storage_path": None},
+            "image_gen": {"enabled": False, "storage_path": None, "output_path": None},
+            "prompts": [],
             "first_run": True,
         }
 
@@ -94,6 +95,8 @@ class ConfigManager:
             ):
                 merged[key] = self._merge_configs(merged[key], value)
             else:
+                # For lists and other types, use user value directly
+                # This ensures user prompts and other list values are preserved
                 merged[key] = value
         return merged
 
@@ -352,3 +355,15 @@ class ConfigManager:
             self.set("ollama.model_settings", model_settings)
             return True
         return False
+
+    def get_prompts(self) -> list:
+        """Get list of saved prompts."""
+        prompts = self.get("prompts", [])
+        # Ensure we return a list
+        return prompts if isinstance(prompts, list) else []
+
+    def save_prompts(self, prompts: list):
+        """Save prompts list."""
+        self.config["prompts"] = prompts
+        # Note: Don't call save_config() here - let the caller save when ready
+        # This prevents race conditions when multiple settings are being saved

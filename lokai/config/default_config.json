@@ -36,6 +36,7 @@
   "image_gen": {
     "enabled": false,
     "storage_path": null,
+    "output_path": null,
     "model": "stabilityai/stable-diffusion-xl-base-1.0",
     "lora_model": "None",
     "lora_weight": 1.0,
@@ -46,6 +47,29 @@
     "guidance_scale": 7.5,
     "auto_apply_presets": true,
     "use_sequential_cpu_offload": true
+  },
+  "video_gen": {
+    "storage_path": null,
+    "output_path": null,
+    "model": "stabilityai/stable-video-diffusion-img2vid",
+    "resolution": "auto",
+    "num_frames": 14,
+    "steps": 25,
+    "motion_bucket_id": 127,
+    "fps": 7,
+    "use_sequential_cpu_offload": true
+  },
+  "audio_gen": {
+    "enabled": true,
+    "model": "stabilityai/stable-audio-open-1.0",
+    "storage_path": null,
+    "output_folder": null,
+    "audio_length": 10.0,
+    "steps": 200,
+    "guidance_scale": 7.0,
+    "negative_prompt": "Low quality.",
+    "use_sequential_cpu_offload": false,
+    "num_waveforms_per_prompt": 1
   },
   "model_presets": {
     "stabilityai/stable-diffusion-xl-base-1.0": {
@@ -90,6 +114,7 @@
     "top_k_relevant": 5,
     "recent_messages_count": 10
   },
+  "prompts": [],
   "first_run": true
 }
 

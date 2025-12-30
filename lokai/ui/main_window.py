@@ -33,9 +33,13 @@ from lokai.ui.debug_dialog import DebugDialog
 from lokai.core.ollama_detector import OllamaDetector
 from lokai.core.ollama_client import OllamaClient
 from lokai.core.image_generator import ImageGenerator
+from lokai.core.video_generator import VideoGenerator
+from lokai.core.audio_generator import AudioGenerator
 from lokai.core.embedding_client import EmbeddingClient
 from lokai.core.chat_vector_store import ChatVectorStore
 from lokai.ui.image_worker import ImageGenerationWorker
+from lokai.ui.video_worker import VideoGenerationWorker
+from lokai.ui.audio_worker import AudioGenerationWorker
 
 
 class MainWindow(QMainWindow):
@@ -315,6 +319,58 @@ class MainWindow(QMainWindow):
                 traceback.print_exc()
                 self.image_generator = None
 
+    def _init_video_generator(self):
+        """Initialize video generator if enabled and path is set."""
+        # Use video_gen.storage_path if set, otherwise fallback to models.storage_path
+        storage_path = self.config_manager.get("video_gen.storage_path")
+        if not storage_path:
+            storage_path = self.config_manager.get("models.storage_path")
+
+        if storage_path:
+            try:
+                # Setup environment before importing diffusers
+                from lokai.utils.model_manager import ModelManager
+
+                manager = ModelManager(storage_path)
+                manager.setup_environment_variables()
+
+                self.video_generator = VideoGenerator(storage_path)
+                if not self.video_generator.is_available():
+                    self.video_generator = None
+                    print("Video generation not available (diffusers not installed)")
+            except Exception as e:
+                print(f"Error initializing video generator: {e}")
+                import traceback
+
+                traceback.print_exc()
+                self.video_generator = None
+
+    def _init_audio_generator(self):
+        """Initialize audio generator if enabled and path is set."""
+        # Use audio_gen.storage_path if set, otherwise fallback to models.storage_path
+        storage_path = self.config_manager.get("audio_gen.storage_path")
+        if not storage_path:
+            storage_path = self.config_manager.get("models.storage_path")
+
+        if storage_path:
+            try:
+                # Setup environment before importing diffusers
+                from lokai.utils.model_manager import ModelManager
+
+                manager = ModelManager(storage_path)
+                manager.setup_environment_variables()
+
+                self.audio_generator = AudioGenerator(storage_path)
+                if not self.audio_generator.is_available():
+                    self.audio_generator = None
+                    print("Audio generation not available (diffusers not installed)")
+            except Exception as e:
+                print(f"Error initializing audio generator: {e}")
+                import traceback
+
+                traceback.print_exc()
+                self.audio_generator = None
+
     def _init_tts_engine(self):
         """Initialize TTS engine if enabled."""
         try:
@@ -477,7 +533,7 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.status_panel)
 
         # Chat widget (center, takes most space)
-        self.chat_widget = ChatWidget(self.ollama_client)
+        self.chat_widget = ChatWidget(self.ollama_client, self.config_manager)
         main_layout.addWidget(self.chat_widget, stretch=1)
 
         # Connect chat widget signals
@@ -490,10 +546,23 @@ class MainWindow(QMainWindow):
         self.chat_widget.text_selected_for_image.connect(
             self.on_text_selected_for_image
         )
+        self.chat_widget.audio_prompt_sent.connect(self.on_audio_prompt_sent)
+        self.chat_widget.text_selected_for_audio.connect(
+            self.on_text_selected_for_audio
+        )
 
         # Initialize image generator (if enabled)
         self.image_generator = None
+        self.video_generator = None
+        self.audio_generator = None
         self._init_image_generator()
+        self._init_video_generator()
+        self._init_audio_generator()
+
+        # Connect video generation signal
+        self.chat_widget.image_selected_for_video.connect(
+            self.on_image_selected_for_video
+        )
 
         # Initialize TTS engine
         self.tts_engine = None
@@ -1143,15 +1212,51 @@ class MainWindow(QMainWindow):
             if storage_path:
                 self._init_image_generator()
 
-            # Reinit TTS engine if TTS settings changed
-            self._init_tts_engine()
+            # Update TTS engine settings if needed (don't reinitialize if not necessary)
+            new_lang_code = self.config_manager.get("tts.lang_code", "a")
+            new_voice = self.config_manager.get("tts.voice", "af_heart")
+            new_speed = self.config_manager.get("tts.speed", 1.0)
+            tts_enabled = self.config_manager.get("tts.enabled", True)
+
+            # Check if we need to reinitialize TTS engine
+            needs_reinit = False
+            if not tts_enabled:
+                if self.tts_engine is not None:
+                    self.tts_engine = None
+            elif self.tts_engine is None:
+                # No engine exists, need to create one
+                needs_reinit = True
+            elif hasattr(self.tts_engine, "lang_code") and hasattr(
+                self.tts_engine, "voice"
+            ):
+                # Check if settings changed
+                if (
+                    self.tts_engine.lang_code != new_lang_code
+                    or self.tts_engine.voice != new_voice
+                ):
+                    needs_reinit = True
+                elif (
+                    hasattr(self.tts_engine, "speed")
+                    and self.tts_engine.speed != new_speed
+                ):
+                    # Just update speed if only that changed
+                    self.tts_engine.speed = new_speed
+            else:
+                # Can't check, assume we need to reinit
+                needs_reinit = True
+
+            if needs_reinit and tts_enabled:
+                self._init_tts_engine()
+            elif self.tts_engine and hasattr(self.tts_engine, "speed"):
+                # Just update speed if only that changed
+                self.tts_engine.speed = new_speed
 
             # Update status panel voice dropdown based on current language
-            lang_code = self.config_manager.get("tts.lang_code", "a")
+            lang_code = new_lang_code
             if hasattr(self.status_panel, "update_voices_for_language"):
                 self.status_panel.update_voices_for_language(lang_code)
 
-            voice = self.config_manager.get("tts.voice", "af_heart")
+            voice = new_voice
             if hasattr(self.status_panel, "tts_voice_combo"):
                 # Wait a bit for voices to update
                 from PySide6.QtCore import QTimer
@@ -1749,11 +1854,25 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(
                 f"Image generated: {os.path.basename(image_path)}"
             )
+
+            # Clear GPU memory after generation (move model to CPU, keep loaded)
+            if self.image_generator:
+                print("Clearing GPU memory after image generation...")
+                self.image_generator.clear_gpu_memory()
+
             # Re-enable send button
             self.chat_widget.set_send_enabled(True)
         except Exception as e:
             print(f"Error displaying image: {e}")
             QMessageBox.warning(self, "Error", f"Error displaying image: {e}")
+
+            # Clear GPU memory even on error
+            if self.image_generator:
+                try:
+                    self.image_generator.clear_gpu_memory()
+                except:
+                    pass
+
             # Re-enable send button even on error
             self.chat_widget.set_send_enabled(True)
 
@@ -1796,10 +1915,217 @@ class MainWindow(QMainWindow):
         # Generate image using current settings
         self.on_image_prompt_sent(prompt)
 
+    def on_audio_prompt_sent(self, prompt: str):
+        """Handle audio generation prompt."""
+        if not self.audio_generator:
+            QMessageBox.warning(
+                self,
+                "Audio Generation Not Available",
+                "Audio generation is not available.\n\n"
+                "Please:\n"
+                "1. Install requirements: pip install -r requirements.txt\n"
+                "2. Set model storage path in Settings > Models",
+            )
+            return
+
+        # Auto-unload Ollama models before audio generation to free GPU memory
+        print("Auto-unloading Ollama models to free GPU memory...")
+        self.ollama_client.unload_all_models_silent()
+
+        # Add user message showing the prompt
+        self.chat_widget.add_user_message(f"Generate audio: {prompt}")
+
+        # Determine seed to use
+        import random
+
+        if self.seed_locked and self.last_image_seed is not None:
+            # Use locked seed (same as last time)
+            seed_to_use = self.last_image_seed
+        else:
+            # Generate random seed
+            seed_to_use = random.randint(0, 2147483647)
+            self.last_image_seed = seed_to_use
+
+        # Start audio generation in background thread
+        worker = AudioGenerationWorker(
+            self.audio_generator, prompt, self.config_manager, seed=seed_to_use
+        )
+        worker.audio_generated.connect(self._on_audio_generated)
+        worker.error_occurred.connect(self._on_audio_error)
+        worker.progress_updated.connect(self._on_audio_progress)
+        self.current_audio_worker = worker
+        worker.finished.connect(lambda: setattr(self, "current_audio_worker", None))
+        # Disable send button while generating
+        self.chat_widget.set_send_enabled(False)
+        worker.start()
+
+    def on_text_selected_for_audio(self, text: str):
+        """Handle text selection for audio generation."""
+        if not self.audio_generator:
+            self.status_bar.showMessage(
+                "Audio generation not available. Check Settings > Models."
+            )
+            return
+
+        # Auto-unload Ollama models before audio generation
+        print("Auto-unloading Ollama models to free GPU memory...")
+        self.ollama_client.unload_all_models_silent()
+
+        # Use selected text as prompt
+        prompt = text.strip()
+        if not prompt:
+            return
+
+        # Generate audio using current settings
+        self.on_audio_prompt_sent(prompt)
+
+    def _on_audio_generated(self, audio_path: str):
+        """Handle successful audio generation."""
+        try:
+            # Get prompt from worker
+            prompt = getattr(self.current_audio_worker, "prompt", "Generated audio")
+            self.chat_widget.add_audio_message(audio_path, prompt)
+            self.status_bar.showMessage(
+                f"Audio generated: {os.path.basename(audio_path)}"
+            )
+
+            # Clear GPU memory after generation
+            if self.audio_generator:
+                print("Clearing GPU memory after audio generation...")
+                self.audio_generator.unload_model()
+
+            self.chat_widget.set_send_enabled(True)
+        except Exception as e:
+            print(f"Error displaying audio: {e}")
+            QMessageBox.warning(self, "Error", f"Error displaying audio: {e}")
+            self.chat_widget.set_send_enabled(True)
+
+    def _on_audio_error(self, error_msg: str):
+        """Handle audio generation error."""
+        QMessageBox.warning(self, "Audio Generation Error", error_msg)
+
+        # Clear GPU memory on error
+        if self.audio_generator:
+            try:
+                self.audio_generator.unload_model()
+            except:
+                pass
+
+        self.chat_widget.set_send_enabled(True)
+
+    def _on_audio_progress(self, progress: int):
+        """Handle audio generation progress."""
+        self.status_bar.showMessage(f"Generating audio... {progress}%")
+
+    def on_image_selected_for_video(self, image_path: str):
+        """Handle image selection for video generation."""
+        if not self.video_generator:
+            QMessageBox.warning(
+                self,
+                "Video Generation Not Available",
+                "Video generation is not available.\n\n"
+                "Please:\n"
+                "1. Install requirements: pip install -r requirements.txt\n"
+                "2. Set model storage path in Settings > Models\n"
+                "3. Download SVD model (stabilityai/stable-video-diffusion-img2vid)",
+            )
+            return
+
+        # Auto-unload other models to free GPU memory
+        print("Auto-unloading models to free GPU memory...")
+        self.ollama_client.unload_all_models_silent()
+        if self.image_generator:
+            self.image_generator.clear_gpu_memory()
+
+        # Also unload image generator pipeline completely if loaded
+        if self.image_generator and self.image_generator.pipeline is not None:
+            print("Unloading image generator pipeline completely...")
+            self.image_generator.unload_model()
+
+        # Aggressive GPU memory cleanup before video generation
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                import gc
+
+                print("Performing aggressive GPU memory cleanup...")
+                for _ in range(10):
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                print("GPU memory cleanup complete")
+        except ImportError:
+            pass  # torch not available
+
+        # Add user message
+        self.chat_widget.add_user_message("Generate video from image")
+
+        # Determine seed
+        import random
+
+        seed = random.randint(0, 2147483647)
+
+        # Start video generation in background thread
+        worker = VideoGenerationWorker(
+            self.video_generator, image_path, self.config_manager, seed=seed
+        )
+        worker.video_generated.connect(self._on_video_generated)
+        worker.error_occurred.connect(self._on_video_error)
+        worker.progress_updated.connect(self._on_video_progress)
+        self.current_video_worker = worker
+        worker.finished.connect(lambda: setattr(self, "current_video_worker", None))
+        self.chat_widget.set_send_enabled(False)
+        worker.start()
+
+    def _on_video_generated(self, video_path: str):
+        """Handle successful video generation."""
+        try:
+            self.chat_widget.add_video_message(video_path)
+            self.status_bar.showMessage(
+                f"Video generated: {os.path.basename(video_path)}"
+            )
+
+            # Clear GPU memory after generation
+            if self.video_generator:
+                print("Clearing GPU memory after video generation...")
+                self.video_generator.unload_model()
+
+            self.chat_widget.set_send_enabled(True)
+        except Exception as e:
+            print(f"Error displaying video: {e}")
+            QMessageBox.warning(self, "Error", f"Error displaying video: {e}")
+            self.chat_widget.set_send_enabled(True)
+
+    def _on_video_error(self, error_msg: str):
+        """Handle video generation error."""
+        QMessageBox.warning(self, "Video Generation Error", error_msg)
+
+        # Clear GPU memory on error
+        if self.video_generator:
+            try:
+                self.video_generator.unload_model()
+            except:
+                pass
+
+        self.chat_widget.set_send_enabled(True)
+
+    def _on_video_progress(self, progress: int):
+        """Handle video generation progress."""
+        self.status_bar.showMessage(f"Generating video... {progress}%")
+
     def _on_image_error(self, error: str):
         """Handle image generation error."""
         self.chat_widget.add_user_message(f"[Error generating image: {error}]")
         QMessageBox.warning(self, "Image Generation Error", error)
+
+        # Clear GPU memory on error (move model to CPU, keep loaded)
+        if self.image_generator:
+            print("Clearing GPU memory after image generation error...")
+            try:
+                self.image_generator.clear_gpu_memory()
+            except Exception as e:
+                print(f"Error clearing GPU memory: {e}")
+
         # Re-enable send button
         self.chat_widget.set_send_enabled(True)
 

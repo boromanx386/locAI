@@ -4,6 +4,7 @@ Configuration dialog with tabs for all settings.
 """
 
 from pathlib import Path
+import os
 from PySide6.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -22,6 +23,8 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QFormLayout,
     QTextEdit,
+    QListWidget,
+    QListWidgetItem,
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QDesktopServices
@@ -73,6 +76,14 @@ class SettingsDialog(QDialog):
         self.image_gen_tab = self.create_image_gen_tab()
         self.tabs.addTab(self.image_gen_tab, "Image Generation")
 
+        # Video Generation tab
+        self.video_gen_tab = self.create_video_gen_tab()
+        self.tabs.addTab(self.video_gen_tab, "Video Generation")
+
+        # Audio Generation tab
+        self.audio_gen_tab = self.create_audio_gen_tab()
+        self.tabs.addTab(self.audio_gen_tab, "Audio Generation")
+
         # LoRA tab
         self.lora_tab = self.create_lora_tab()
         self.tabs.addTab(self.lora_tab, "LoRA")
@@ -84,6 +95,10 @@ class SettingsDialog(QDialog):
         # Semantic Memory tab
         self.rag_tab = self.create_rag_tab()
         self.tabs.addTab(self.rag_tab, "Semantic Memory")
+
+        # Prompts tab
+        self.prompts_tab = self.create_prompts_tab()
+        self.tabs.addTab(self.prompts_tab, "Prompts")
 
         layout.addWidget(self.tabs)
 
@@ -376,6 +391,21 @@ class SettingsDialog(QDialog):
         )
         image_layout.addRow("", self.cpu_offload_check)
 
+        # Output folder for generated images
+        image_output_layout = QHBoxLayout()
+        self.image_output_path_edit = QLineEdit()
+        self.image_output_path_edit.setReadOnly(True)
+        self.image_output_path_edit.setPlaceholderText(
+            "Select folder for generated images..."
+        )
+        image_output_layout.addWidget(self.image_output_path_edit, stretch=1)
+
+        self.browse_image_output_btn = QPushButton("Browse...")
+        self.browse_image_output_btn.clicked.connect(self.browse_image_output_path)
+        image_output_layout.addWidget(self.browse_image_output_btn)
+
+        image_layout.addRow("Output Folder:", image_output_layout)
+
         self.image_width_spin = QSpinBox()
         self.image_width_spin.setRange(256, 2048)
         self.image_width_spin.setValue(1024)
@@ -457,6 +487,335 @@ class SettingsDialog(QDialog):
 
         # Connect model change to update preset info and auto-apply
         self.image_model_combo.currentTextChanged.connect(self.on_model_changed)
+
+        layout.addStretch()
+        widget.setLayout(layout)
+        return widget
+
+    def create_video_gen_tab(self) -> QWidget:
+        """Create Video Generation settings tab."""
+        widget = QWidget()
+        layout = QVBoxLayout()
+        layout.setSpacing(12)
+
+        video_group = QGroupBox("Video Generation Settings")
+        video_layout = QFormLayout()
+
+        # Video model storage path
+        video_path_layout = QHBoxLayout()
+        self.video_model_path_edit = QLineEdit()
+        self.video_model_path_edit.setReadOnly(True)
+        self.video_model_path_edit.setPlaceholderText(
+            "Select folder with video models..."
+        )
+        video_path_layout.addWidget(self.video_model_path_edit, stretch=1)
+
+        self.browse_video_path_btn = QPushButton("Browse...")
+        self.browse_video_path_btn.clicked.connect(self.browse_video_model_path)
+        video_path_layout.addWidget(self.browse_video_path_btn)
+
+        video_layout.addRow("Video Models Folder:", video_path_layout)
+
+        # Output folder for generated videos
+        video_output_layout = QHBoxLayout()
+        self.video_output_path_edit = QLineEdit()
+        self.video_output_path_edit.setReadOnly(True)
+        self.video_output_path_edit.setPlaceholderText(
+            "Select folder for generated videos..."
+        )
+        video_output_layout.addWidget(self.video_output_path_edit, stretch=1)
+
+        self.browse_video_output_btn = QPushButton("Browse...")
+        self.browse_video_output_btn.clicked.connect(self.browse_video_output_path)
+        video_output_layout.addWidget(self.browse_video_output_btn)
+
+        video_layout.addRow("Output Folder:", video_output_layout)
+
+        # Video resolution selection
+        self.video_resolution_combo = QComboBox()
+        self.video_resolution_combo.addItems(
+            [
+                "Auto (detect from image)",
+                "576x1024 (Portrait/Vertical)",
+                "1024x576 (Landscape/Horizontal/Wide)",
+            ]
+        )
+        self.video_resolution_combo.setToolTip(
+            "Resolution for video generation:\n"
+            "Auto: Automatically detects from input image aspect ratio\n"
+            "576x1024: Portrait/vertical format (9:16)\n"
+            "1024x576: Landscape/horizontal/wide format (16:9)"
+        )
+        video_layout.addRow("Video Resolution:", self.video_resolution_combo)
+
+        # Model selection with detection
+        model_layout = QHBoxLayout()
+        self.video_model_combo = QComboBox()
+        self.video_model_combo.setEditable(True)
+        self.video_model_combo.setMinimumWidth(300)
+        self.video_model_combo.setStyleSheet(
+            """
+            QComboBox {
+                padding: 4px;
+                border: 1px solid #555;
+                border-radius: 10px;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 30px;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 6px solid #aaa;
+                width: 0;
+                height: 0;
+                margin-right: 8px;
+            }
+            QComboBox QAbstractItemView {
+                border: 1px solid #555;
+                selection-background-color: #3a3a3a;
+            }
+        """
+        )
+        model_layout.addWidget(self.video_model_combo, stretch=1)
+
+        self.refresh_video_models_btn = QPushButton("Refresh")
+        MaterialIcons.apply_to_button(
+            self.refresh_video_models_btn, MaterialIcons.REFRESH_SVG, size=18
+        )
+        self.refresh_video_models_btn.setToolTip("Refresh detected video models")
+        self.refresh_video_models_btn.clicked.connect(self.refresh_video_models)
+        model_layout.addWidget(self.refresh_video_models_btn)
+
+        self.video_model_combo.setToolTip(
+            "SVD: 14 frames\n" "SVD-XT: 25 frames (longer video)"
+        )
+        video_layout.addRow("Model:", model_layout)
+
+        # Sequential CPU offload checkbox
+        self.video_cpu_offload_check = QCheckBox(
+            "Use Sequential CPU Offload (Save GPU Memory)"
+        )
+        self.video_cpu_offload_check.setToolTip(
+            "Enable sequential CPU offload to minimize GPU VRAM usage. "
+            "Model components are moved between CPU and GPU as needed. "
+            "Recommended for GPUs with limited VRAM (8GB or less). "
+            "Disable for faster generation if you have enough GPU memory."
+        )
+        video_layout.addRow("", self.video_cpu_offload_check)
+
+        # Number of frames
+        self.video_frames_spin = QSpinBox()
+        self.video_frames_spin.setRange(1, 25)
+        self.video_frames_spin.setValue(14)
+        self.video_frames_spin.setToolTip(
+            "Number of frames to generate.\n"
+            "SVD: up to 14 frames (recommended: 14)\n"
+            "SVD-XT: up to 25 frames (recommended: 25)\n"
+            "Note: More frames = longer video but more VRAM usage"
+        )
+        video_layout.addRow("Number of Frames:", self.video_frames_spin)
+
+        # Inference steps
+        self.video_steps_spin = QSpinBox()
+        self.video_steps_spin.setRange(10, 100)
+        self.video_steps_spin.setValue(25)
+        self.video_steps_spin.setToolTip(
+            "Number of inference steps. More steps = better quality but slower. "
+            "Recommended: 25-50"
+        )
+        video_layout.addRow("Inference Steps:", self.video_steps_spin)
+
+        # Motion bucket ID (jačina pokreta)
+        self.video_motion_spin = QSpinBox()
+        self.video_motion_spin.setRange(1, 255)
+        self.video_motion_spin.setValue(127)
+        self.video_motion_spin.setToolTip(
+            "Motion Bucket ID - kontroliše jačinu pokreta u videu.\n"
+            "Niže vrednosti (1-100): Manje pokreta, statičniji video\n"
+            "Srednje vrednosti (100-150): Umeren pokret (preporučeno: 127)\n"
+            "Više vrednosti (150-255): Više pokreta, dinamičniji video\n"
+            "Default: 127 (uravnoteženo)"
+        )
+        video_layout.addRow(
+            "Motion Bucket ID (Jačina Pokreta):", self.video_motion_spin
+        )
+
+        # FPS
+        self.video_fps_spin = QSpinBox()
+        self.video_fps_spin.setRange(1, 30)
+        self.video_fps_spin.setValue(7)
+        self.video_fps_spin.setToolTip(
+            "Frames per second for output video. "
+            "Recommended: 7 fps for natural motion"
+        )
+        video_layout.addRow("FPS:", self.video_fps_spin)
+
+        video_group.setLayout(video_layout)
+        layout.addWidget(video_group)
+
+        # Info label
+        info_label = QLabel(
+            "Note: Video generation requires an input image.\n"
+            "Right-click on any generated image and select 'Generate Video'."
+        )
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("color: #888; padding: 8px;")
+        layout.addWidget(info_label)
+
+        layout.addStretch()
+        widget.setLayout(layout)
+        return widget
+
+    def create_audio_gen_tab(self) -> QWidget:
+        """Create Audio Generation settings tab."""
+        widget = QWidget()
+        layout = QVBoxLayout()
+        layout.setSpacing(12)
+
+        audio_group = QGroupBox("Audio Generation Settings")
+        audio_layout = QFormLayout()
+
+        # Audio model storage path
+        audio_path_layout = QHBoxLayout()
+        self.audio_model_path_edit = QLineEdit()
+        self.audio_model_path_edit.setReadOnly(True)
+        self.audio_model_path_edit.setPlaceholderText(
+            "Select folder with audio models..."
+        )
+        audio_path_layout.addWidget(self.audio_model_path_edit, stretch=1)
+
+        self.browse_audio_path_btn = QPushButton("Browse...")
+        self.browse_audio_path_btn.clicked.connect(self.browse_audio_model_path)
+        audio_path_layout.addWidget(self.browse_audio_path_btn)
+
+        audio_layout.addRow("Audio Models Folder:", audio_path_layout)
+
+        # Output folder for generated audio files
+        audio_output_layout = QHBoxLayout()
+        self.audio_output_path_edit = QLineEdit()
+        self.audio_output_path_edit.setReadOnly(True)
+        self.audio_output_path_edit.setPlaceholderText(
+            "Select folder for generated audio..."
+        )
+        audio_output_layout.addWidget(self.audio_output_path_edit, stretch=1)
+
+        self.browse_audio_output_btn = QPushButton("Browse...")
+        self.browse_audio_output_btn.clicked.connect(self.browse_audio_output_path)
+        audio_output_layout.addWidget(self.browse_audio_output_btn)
+
+        audio_layout.addRow("Output Folder:", audio_output_layout)
+
+        # Model selection
+        model_layout = QHBoxLayout()
+        self.audio_model_combo = QComboBox()
+        self.audio_model_combo.addItem("stabilityai/stable-audio-open-1.0")
+        self.audio_model_combo.setEditable(True)
+        self.audio_model_combo.setMinimumWidth(300)
+        self.audio_model_combo.setStyleSheet(
+            """
+            QComboBox {
+                padding: 4px;
+                border: 1px solid #555;
+                border-radius: 10px;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 30px;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 6px solid #aaa;
+                width: 0;
+                height: 0;
+                margin-right: 8px;
+            }
+            QComboBox QAbstractItemView {
+                border: 1px solid #555;
+                selection-background-color: #3a3a3a;
+            }
+        """
+        )
+        model_layout.addWidget(self.audio_model_combo, stretch=1)
+        audio_layout.addRow("Model:", model_layout)
+
+        # Audio length (seconds)
+        self.audio_length_spin = QDoubleSpinBox()
+        self.audio_length_spin.setRange(1.0, 47.0)
+        self.audio_length_spin.setValue(10.0)
+        self.audio_length_spin.setSingleStep(1.0)
+        self.audio_length_spin.setDecimals(1)
+        self.audio_length_spin.setToolTip(
+            "Length of generated audio in seconds (1-47). Longer audio requires more VRAM."
+        )
+        audio_layout.addRow("Audio Length (seconds):", self.audio_length_spin)
+
+        # Inference steps
+        self.audio_steps_spin = QSpinBox()
+        self.audio_steps_spin.setRange(50, 500)
+        self.audio_steps_spin.setValue(200)
+        self.audio_steps_spin.setToolTip(
+            "Number of inference steps. More steps = better quality but slower. "
+            "Recommended: 200"
+        )
+        audio_layout.addRow("Inference Steps:", self.audio_steps_spin)
+
+        # Guidance scale
+        self.audio_guidance_spin = QDoubleSpinBox()
+        self.audio_guidance_spin.setRange(1.0, 20.0)
+        self.audio_guidance_spin.setValue(7.0)
+        self.audio_guidance_spin.setSingleStep(0.5)
+        self.audio_guidance_spin.setDecimals(1)
+        self.audio_guidance_spin.setToolTip(
+            "Guidance scale (CFG). Higher = follows prompt more closely. "
+            "Recommended: 7.0"
+        )
+        audio_layout.addRow("Guidance Scale:", self.audio_guidance_spin)
+
+        # Negative prompt
+        self.audio_negative_prompt_edit = QLineEdit()
+        self.audio_negative_prompt_edit.setPlaceholderText("Low quality.")
+        self.audio_negative_prompt_edit.setToolTip(
+            "Negative prompt - what to avoid in generated audio"
+        )
+        audio_layout.addRow("Negative Prompt:", self.audio_negative_prompt_edit)
+
+        # Number of waveforms per prompt (variations)
+        self.audio_num_waveforms_spin = QSpinBox()
+        self.audio_num_waveforms_spin.setRange(1, 4)
+        self.audio_num_waveforms_spin.setValue(1)
+        self.audio_num_waveforms_spin.setToolTip(
+            "Number of audio variations to generate per prompt (1-4). "
+            "More variations = more VRAM usage and longer generation time."
+        )
+        audio_layout.addRow("Number of Variations:", self.audio_num_waveforms_spin)
+
+        # Sequential CPU offload checkbox (optional)
+        self.audio_cpu_offload_check = QCheckBox(
+            "Use Sequential CPU Offload (Save GPU Memory)"
+        )
+        self.audio_cpu_offload_check.setToolTip(
+            "Enable sequential CPU offload to minimize GPU VRAM usage. "
+            "Model components are moved between CPU and GPU as needed. "
+            "Optional - disable for faster generation if you have enough GPU memory."
+        )
+        audio_layout.addRow("", self.audio_cpu_offload_check)
+
+        audio_group.setLayout(audio_layout)
+        layout.addWidget(audio_group)
+
+        # Info label
+        info_label = QLabel(
+            "Note: Audio generation requires text prompts.\n"
+            "Use the audio mode button in chat or right-click selected text and choose 'Generate Audio'."
+        )
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("color: #888; padding: 8px;")
+        layout.addWidget(info_label)
 
         layout.addStretch()
         widget.setLayout(layout)
@@ -579,7 +938,7 @@ class SettingsDialog(QDialog):
 
         # Voice selection (will be populated dynamically based on language)
         self.voice_combo = QComboBox()
-        self.update_voices_for_language("a")  # Default to American English
+        # Don't initialize voices here - will be loaded when settings are loaded or language changes
         tts_layout.addRow("Voice:", self.voice_combo)
 
         # Speed control
@@ -692,6 +1051,134 @@ class SettingsDialog(QDialog):
         widget.setLayout(layout)
         return widget
 
+    def create_prompts_tab(self) -> QWidget:
+        """Create Prompts management tab."""
+        widget = QWidget()
+        layout = QVBoxLayout()
+        layout.setSpacing(12)
+
+        # Info label
+        info_label = QLabel(
+            "Manage your prompt templates. Click 'Add' to create a new prompt, "
+            "or select an existing one to edit or delete."
+        )
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("color: #888; padding: 8px;")
+        layout.addWidget(info_label)
+
+        # List widget for prompts
+        self.prompts_list = QListWidget()
+        self.prompts_list.setToolTip("List of saved prompts. Double-click to edit.")
+        self.prompts_list.itemDoubleClicked.connect(self.edit_prompt)
+        layout.addWidget(self.prompts_list)
+
+        # Buttons
+        btn_layout = QHBoxLayout()
+        self.add_prompt_btn = QPushButton("Add")
+        MaterialIcons.apply_to_button(
+            self.add_prompt_btn, MaterialIcons.SAVE_SVG, size=18
+        )
+        self.add_prompt_btn.clicked.connect(self.add_prompt)
+
+        self.edit_prompt_btn = QPushButton("Edit")
+        MaterialIcons.apply_to_button(
+            self.edit_prompt_btn, MaterialIcons.SETTINGS_SVG, size=18
+        )
+        self.edit_prompt_btn.clicked.connect(self.edit_prompt)
+
+        self.delete_prompt_btn = QPushButton("Delete")
+        MaterialIcons.apply_to_button(
+            self.delete_prompt_btn, MaterialIcons.DELETE_SVG, size=18
+        )
+        self.delete_prompt_btn.clicked.connect(self.delete_prompt)
+
+        btn_layout.addWidget(self.add_prompt_btn)
+        btn_layout.addWidget(self.edit_prompt_btn)
+        btn_layout.addWidget(self.delete_prompt_btn)
+        btn_layout.addStretch()
+        layout.addLayout(btn_layout)
+
+        layout.addStretch()
+        widget.setLayout(layout)
+        return widget
+
+    def add_prompt(self):
+        """Add a new prompt."""
+        from PySide6.QtWidgets import QInputDialog
+
+        name, ok = QInputDialog.getText(self, "Add Prompt", "Enter prompt name:")
+        if not ok or not name.strip():
+            return
+
+        text, ok = QInputDialog.getMultiLineText(
+            self, "Add Prompt", "Enter prompt text:", ""
+        )
+        if not ok:
+            return
+
+        # Add to list
+        item = QListWidgetItem(name)
+        item.setData(
+            Qt.ItemDataRole.UserRole, {"name": name.strip(), "text": text.strip()}
+        )
+        self.prompts_list.addItem(item)
+
+    def edit_prompt(self):
+        """Edit selected prompt."""
+        current_item = self.prompts_list.currentItem()
+        if not current_item:
+            QMessageBox.information(
+                self, "No Selection", "Please select a prompt to edit."
+            )
+            return
+
+        from PySide6.QtWidgets import QInputDialog
+
+        prompt_data = current_item.data(Qt.ItemDataRole.UserRole)
+        if not prompt_data:
+            prompt_data = {"name": current_item.text(), "text": ""}
+
+        # Edit name
+        name, ok = QInputDialog.getText(
+            self, "Edit Prompt", "Enter prompt name:", text=prompt_data.get("name", "")
+        )
+        if not ok or not name.strip():
+            return
+
+        # Edit text
+        text, ok = QInputDialog.getMultiLineText(
+            self, "Edit Prompt", "Enter prompt text:", prompt_data.get("text", "")
+        )
+        if not ok:
+            return
+
+        # Update item
+        current_item.setText(name.strip())
+        current_item.setData(
+            Qt.ItemDataRole.UserRole, {"name": name.strip(), "text": text.strip()}
+        )
+
+    def delete_prompt(self):
+        """Delete selected prompt."""
+        current_item = self.prompts_list.currentItem()
+        if not current_item:
+            QMessageBox.information(
+                self, "No Selection", "Please select a prompt to delete."
+            )
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Delete Prompt",
+            f"Are you sure you want to delete '{current_item.text()}'?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+
+        if reply == QMessageBox.Yes:
+            row = self.prompts_list.row(current_item)
+            self.prompts_list.takeItem(row)
+
     def on_language_changed(self, lang_text: str):
         """Handle language selection change - update voice list."""
         # Extract lang_code from text (e.g., "American English (a)" -> "a")
@@ -700,11 +1187,79 @@ class SettingsDialog(QDialog):
 
     def update_voices_for_language(self, lang_code: str):
         """Update voice combo box with voices for selected language."""
-        from lokai.core.tts_engine import TTSEngine
+        # Use hardcoded voice lists to avoid initializing TTSEngine (which loads Kokoro model)
+        voices_by_language = {
+            "a": [  # American English
+                "af_alloy",
+                "af_aoede",
+                "af_bella",
+                "af_heart",
+                "af_jessica",
+                "af_kore",
+                "af_nicole",
+                "af_nova",
+                "af_river",
+                "af_sarah",
+                "af_sky",
+                "am_adam",
+                "am_echo",
+                "am_eric",
+                "am_fenrir",
+                "am_liam",
+                "am_michael",
+                "am_onyx",
+                "am_puck",
+                "am_santa",
+            ],
+            "b": [  # British English
+                "bf_alice",
+                "bf_emma",
+                "bf_isabella",
+                "bf_lily",
+                "bm_daniel",
+                "bm_fable",
+                "bm_george",
+                "bm_lewis",
+            ],
+            "e": [  # Spanish
+                "ef_dora",
+                "em_alex",
+                "em_santa",
+            ],
+            "f": [  # French
+                "ff_siwis",
+            ],
+            "h": [  # Hindi
+                "hf_alpha",
+                "hf_beta",
+                "hm_omega",
+                "hm_psi",
+            ],
+            "i": [  # Italian
+                "if_sara",
+                "im_nicola",
+            ],
+            "j": [  # Japanese
+                "jf_alpha",
+                "jf_gongitsune",
+                "jf_nezumi",
+                "jf_tebukuro",
+                "jm_kumo",
+            ],
+            "p": [  # Brazilian Portuguese
+                "pf_dora",
+                "pm_alex",
+                "pm_santa",
+            ],
+            "z": [  # Mandarin Chinese
+                "zf_xiaobei",
+                "zf_xiaoni",
+                "zf_xiaoxiao",
+                "zf_xiaoyi",
+            ],
+        }
 
-        # Create temporary engine to get voices
-        temp_engine = TTSEngine(lang_code=lang_code)
-        voices = temp_engine.get_voices_for_language(lang_code)
+        voices = voices_by_language.get(lang_code, voices_by_language["a"])
 
         # Save current selection if it exists in new list
         current_voice = self.voice_combo.currentText()
@@ -741,8 +1296,186 @@ class SettingsDialog(QDialog):
                 self.model_path_edit.setText(path)
                 # Refresh image models after path change
                 self.refresh_image_models()
+                # Refresh video models after path change
+                if hasattr(self, "refresh_video_models"):
+                    self.refresh_video_models()
             else:
                 QMessageBox.warning(self, "Invalid Path", error)
+
+    def browse_video_model_path(self):
+        """Browse for video model storage path."""
+        current_path = self.video_model_path_edit.text()
+        if not current_path:
+            # Default to Q: if available, otherwise use same as image models
+            if os.path.exists("Q:\\"):
+                current_path = "Q:\\huggingface_cache"
+            else:
+                current_path = (
+                    self.model_path_edit.text()
+                    if self.model_path_edit.text()
+                    else str(Path.home() / "Documents" / "locAI" / "models")
+                )
+
+        path = QFileDialog.getExistingDirectory(
+            self, "Select Video Models Folder", current_path
+        )
+
+        if path:
+            # Validate path
+            manager = ModelManager()
+            is_valid, error = manager.validate_path(path)
+            if is_valid:
+                self.video_model_path_edit.setText(path)
+                # Refresh video models after path change
+                if hasattr(self, "refresh_video_models"):
+                    self.refresh_video_models()
+            else:
+                QMessageBox.warning(self, "Invalid Path", error)
+
+    def browse_image_output_path(self):
+        """Browse for image output folder."""
+        current_path = self.image_output_path_edit.text()
+        if not current_path:
+            # Default to config directory / generated_images
+            from lokai.core.config_manager import ConfigManager
+
+            config_manager = ConfigManager()
+            current_path = str(
+                Path(config_manager.get_config_dir()) / "generated_images"
+            )
+
+        path = QFileDialog.getExistingDirectory(
+            self, "Select Image Output Folder", current_path
+        )
+
+        if path:
+            self.image_output_path_edit.setText(path)
+
+    def browse_video_output_path(self):
+        """Browse for video output folder."""
+        current_path = self.video_output_path_edit.text()
+        if not current_path:
+            # Default to config directory / generated_videos
+            from lokai.core.config_manager import ConfigManager
+
+            config_manager = ConfigManager()
+            current_path = str(
+                Path(config_manager.get_config_dir()) / "generated_videos"
+            )
+
+        path = QFileDialog.getExistingDirectory(
+            self, "Select Video Output Folder", current_path
+        )
+
+        if path:
+            self.video_output_path_edit.setText(path)
+
+    def browse_audio_model_path(self):
+        """Browse for audio model storage path."""
+        current_path = self.audio_model_path_edit.text()
+        if not current_path:
+            # Default to Q: if available, otherwise use same as image models
+            if os.path.exists("Q:\\"):
+                current_path = "Q:\\huggingface_cache"
+            else:
+                current_path = (
+                    self.model_path_edit.text()
+                    if self.model_path_edit.text()
+                    else str(Path.home() / "Documents" / "locAI" / "models")
+                )
+
+        path = QFileDialog.getExistingDirectory(
+            self, "Select Audio Models Folder", current_path
+        )
+
+        if path:
+            # Validate path
+            manager = ModelManager()
+            is_valid, error = manager.validate_path(path)
+            if is_valid:
+                self.audio_model_path_edit.setText(path)
+            else:
+                QMessageBox.warning(self, "Invalid Path", error)
+
+    def browse_audio_output_path(self):
+        """Browse for audio output folder."""
+        current_path = self.audio_output_path_edit.text()
+        if not current_path:
+            # Default to config directory / generated_audio
+            from lokai.core.config_manager import ConfigManager
+
+            config_manager = ConfigManager()
+            current_path = str(
+                Path(config_manager.get_config_dir()) / "generated_audio"
+            )
+
+        path = QFileDialog.getExistingDirectory(
+            self, "Select Audio Output Folder", current_path
+        )
+
+        if path:
+            self.audio_output_path_edit.setText(path)
+
+    def refresh_video_models(self):
+        """Refresh list of detected video models."""
+        self.video_model_combo.clear()
+
+        # Get video model storage path
+        video_storage_path = self.video_model_path_edit.text()
+        if not video_storage_path:
+            # Fallback to Q: if available, or image models path
+            if os.path.exists("Q:\\"):
+                video_storage_path = "Q:\\huggingface_cache"
+            else:
+                video_storage_path = self.model_path_edit.text()
+                if not video_storage_path:
+                    video_storage_path = self.config_manager.get("models.storage_path")
+
+        if video_storage_path:
+            try:
+                manager = ModelManager(video_storage_path)
+                models = manager.get_available_diffusers_models()
+
+                # Filter for video models
+                video_models = [
+                    m for m in models if "stable-video-diffusion" in m.lower()
+                ]
+
+                if video_models:
+                    # Add detected video models
+                    for model in video_models:
+                        self.video_model_combo.addItem(model)
+
+                    # Add separator if we have detected models
+                    if video_models:
+                        self.video_model_combo.insertSeparator(len(video_models))
+
+                # Add common video models that might not be detected yet
+                common_video_models = [
+                    "stabilityai/stable-video-diffusion-img2vid",
+                    "stabilityai/stable-video-diffusion-img2vid-xt",
+                ]
+
+                for model in common_video_models:
+                    if model not in video_models:
+                        self.video_model_combo.addItem(model)
+            except Exception as e:
+                print(f"Error detecting video models: {e}")
+                # Add default models on error
+                self.video_model_combo.addItems(
+                    [
+                        "stabilityai/stable-video-diffusion-img2vid",
+                        "stabilityai/stable-video-diffusion-img2vid-xt",
+                    ]
+                )
+        else:
+            # No storage path, add default models
+            self.video_model_combo.addItems(
+                [
+                    "stabilityai/stable-video-diffusion-img2vid",
+                    "stabilityai/stable-video-diffusion-img2vid-xt",
+                ]
+            )
 
     def refresh_image_models(self):
         """Refresh list of detected image models."""
@@ -1428,8 +2161,16 @@ class SettingsDialog(QDialog):
         image_enabled = self.config_manager.get("image_gen.enabled", False)
         self.image_enabled_check.setChecked(image_enabled)
 
-        # Load and populate image models
-        self.refresh_image_models()
+        # Load image models - just add defaults, skip filesystem scan for speed
+        # User can click Refresh button if needed
+        if self.image_model_combo.count() == 0:
+            common_models = [
+                "stabilityai/stable-diffusion-xl-base-1.0",
+                "stabilityai/stable-diffusion-2-1-base",
+                "runwayml/stable-diffusion-v1-5",
+                "stabilityai/stable-diffusion-x4-upscaler",
+            ]
+            self.image_model_combo.addItems(common_models)
 
         image_model = self.config_manager.get(
             "image_gen.model", "stabilityai/stable-diffusion-xl-base-1.0"
@@ -1484,8 +2225,131 @@ class SettingsDialog(QDialog):
         )
         self.cpu_offload_check.setChecked(use_cpu_offload)
 
+        # Image output folder
+        image_output_path = self.config_manager.get("image_gen.output_path")
+        if image_output_path:
+            self.image_output_path_edit.setText(image_output_path)
+
+        # Video Generation
+        # Load video model storage path
+        video_model_path = self.config_manager.get("video_gen.storage_path")
+        if not video_model_path:
+            # Default to Q: if available
+            if os.path.exists("Q:\\"):
+                video_model_path = "Q:\\huggingface_cache"
+        if video_model_path:
+            self.video_model_path_edit.setText(video_model_path)
+
+        # Load video models - just add defaults, skip filesystem scan for speed
+        # User can click Refresh button if needed
+        if self.video_model_combo.count() == 0:
+            common_video_models = [
+                "stabilityai/stable-video-diffusion-img2vid",
+                "stabilityai/stable-video-diffusion-img2vid-xt",
+            ]
+            self.video_model_combo.addItems(common_video_models)
+
+        video_model = self.config_manager.get(
+            "video_gen.model", "stabilityai/stable-video-diffusion-img2vid"
+        )
+        # Try to find in combo, otherwise add as custom
+        index = self.video_model_combo.findText(video_model)
+        if index >= 0:
+            self.video_model_combo.setCurrentIndex(index)
+        else:
+            # Add as custom entry
+            self.video_model_combo.setCurrentText(video_model)
+
+        video_frames = self.config_manager.get("video_gen.num_frames", 14)
+        self.video_frames_spin.setValue(video_frames)
+
+        video_steps = self.config_manager.get("video_gen.steps", 25)
+        self.video_steps_spin.setValue(video_steps)
+
+        video_motion = self.config_manager.get("video_gen.motion_bucket_id", 127)
+        self.video_motion_spin.setValue(video_motion)
+
+        video_fps = self.config_manager.get("video_gen.fps", 7)
+        self.video_fps_spin.setValue(video_fps)
+
+        video_resolution = self.config_manager.get("video_gen.resolution", "auto")
+        if video_resolution == "auto":
+            self.video_resolution_combo.setCurrentIndex(0)
+        elif video_resolution == "576x1024":
+            self.video_resolution_combo.setCurrentIndex(1)
+        elif video_resolution == "1024x576":
+            self.video_resolution_combo.setCurrentIndex(2)
+        else:
+            self.video_resolution_combo.setCurrentIndex(0)  # Default to auto
+
+        # Video output folder
+        video_output_path = self.config_manager.get("video_gen.output_path")
+        if video_output_path:
+            self.video_output_path_edit.setText(video_output_path)
+
+        self.video_cpu_offload_check.setChecked(
+            self.config_manager.get("video_gen.use_sequential_cpu_offload", True)
+        )
+
+        # Audio Generation
+        # Load audio model storage path
+        audio_model_path = self.config_manager.get("audio_gen.storage_path")
+        if not audio_model_path:
+            # Default to Q: if available
+            if os.path.exists("Q:\\"):
+                audio_model_path = "Q:\\huggingface_cache"
+        if audio_model_path:
+            self.audio_model_path_edit.setText(audio_model_path)
+
+        audio_model = self.config_manager.get(
+            "audio_gen.model", "stabilityai/stable-audio-open-1.0"
+        )
+        # Try to find in combo, otherwise add as custom
+        index = self.audio_model_combo.findText(audio_model)
+        if index >= 0:
+            self.audio_model_combo.setCurrentIndex(index)
+        else:
+            # Add as custom entry
+            self.audio_model_combo.setCurrentText(audio_model)
+
+        audio_length = self.config_manager.get("audio_gen.audio_length", 10.0)
+        self.audio_length_spin.setValue(audio_length)
+
+        audio_steps = self.config_manager.get("audio_gen.steps", 200)
+        self.audio_steps_spin.setValue(audio_steps)
+
+        audio_guidance = self.config_manager.get("audio_gen.guidance_scale", 7.0)
+        self.audio_guidance_spin.setValue(audio_guidance)
+
+        audio_negative_prompt = self.config_manager.get(
+            "audio_gen.negative_prompt", "Low quality."
+        )
+        self.audio_negative_prompt_edit.setText(audio_negative_prompt)
+
+        num_waveforms = self.config_manager.get("audio_gen.num_waveforms_per_prompt", 1)
+        self.audio_num_waveforms_spin.setValue(num_waveforms)
+
+        # Audio output folder
+        audio_output_path = self.config_manager.get("audio_gen.output_folder")
+        if audio_output_path:
+            self.audio_output_path_edit.setText(audio_output_path)
+
+        self.audio_cpu_offload_check.setChecked(
+            self.config_manager.get("audio_gen.use_sequential_cpu_offload", False)
+        )
+
         # Update preset info
         self.update_preset_info()
+
+        # Load prompts
+        if hasattr(self, "prompts_list"):
+            self.prompts_list.clear()
+            prompts = self.config_manager.get_prompts()
+            for prompt_data in prompts:
+                if isinstance(prompt_data, dict) and "name" in prompt_data:
+                    item = QListWidgetItem(prompt_data["name"])
+                    item.setData(Qt.ItemDataRole.UserRole, prompt_data)
+                    self.prompts_list.addItem(item)
 
     def save_settings(self):
         """Save settings to config."""
@@ -1600,6 +2464,16 @@ class SettingsDialog(QDialog):
             "rag.recent_messages_count", self.recent_messages_spin.value()
         )
 
+        # Save prompts
+        if hasattr(self, "prompts_list"):
+            prompts = []
+            for i in range(self.prompts_list.count()):
+                item = self.prompts_list.item(i)
+                prompt_data = item.data(Qt.ItemDataRole.UserRole)
+                if prompt_data:
+                    prompts.append(prompt_data)
+            self.config_manager.save_prompts(prompts)
+
         # Image Generation
         self.config_manager.set(
             "image_gen.enabled", self.image_enabled_check.isChecked()
@@ -1620,10 +2494,75 @@ class SettingsDialog(QDialog):
             "image_gen.use_sequential_cpu_offload", self.cpu_offload_check.isChecked()
         )
 
-        # Save config
-        self.config_manager.save_config()
+        # Save image output path
+        image_output_path = self.image_output_path_edit.text()
+        if image_output_path:
+            self.config_manager.set("image_gen.output_path", image_output_path)
 
-        # Save config
+        # Video Generation
+        video_model_path = self.video_model_path_edit.text()
+        if video_model_path:
+            self.config_manager.set("video_gen.storage_path", video_model_path)
+
+        self.config_manager.set("video_gen.model", self.video_model_combo.currentText())
+        self.config_manager.set("video_gen.num_frames", self.video_frames_spin.value())
+        self.config_manager.set("video_gen.steps", self.video_steps_spin.value())
+        self.config_manager.set(
+            "video_gen.motion_bucket_id", self.video_motion_spin.value()
+        )
+        self.config_manager.set("video_gen.fps", self.video_fps_spin.value())
+
+        # Save resolution setting
+        resolution_index = self.video_resolution_combo.currentIndex()
+        if resolution_index == 0:
+            resolution = "auto"
+        elif resolution_index == 1:
+            resolution = "576x1024"
+        else:
+            resolution = "1024x576"
+        self.config_manager.set("video_gen.resolution", resolution)
+
+        # Save video output path
+        video_output_path = self.video_output_path_edit.text()
+        if video_output_path:
+            self.config_manager.set("video_gen.output_path", video_output_path)
+
+        self.config_manager.set(
+            "video_gen.use_sequential_cpu_offload",
+            self.video_cpu_offload_check.isChecked(),
+        )
+
+        # Audio Generation
+        audio_model_path = self.audio_model_path_edit.text()
+        if audio_model_path:
+            self.config_manager.set("audio_gen.storage_path", audio_model_path)
+
+        self.config_manager.set("audio_gen.model", self.audio_model_combo.currentText())
+        self.config_manager.set(
+            "audio_gen.audio_length", self.audio_length_spin.value()
+        )
+        self.config_manager.set("audio_gen.steps", self.audio_steps_spin.value())
+        self.config_manager.set(
+            "audio_gen.guidance_scale", self.audio_guidance_spin.value()
+        )
+        self.config_manager.set(
+            "audio_gen.negative_prompt", self.audio_negative_prompt_edit.text()
+        )
+        self.config_manager.set(
+            "audio_gen.num_waveforms_per_prompt", self.audio_num_waveforms_spin.value()
+        )
+
+        # Save audio output path
+        audio_output_path = self.audio_output_path_edit.text()
+        if audio_output_path:
+            self.config_manager.set("audio_gen.output_folder", audio_output_path)
+
+        self.config_manager.set(
+            "audio_gen.use_sequential_cpu_offload",
+            self.audio_cpu_offload_check.isChecked(),
+        )
+
+        # Save config (only once at the end)
         if self.config_manager.save_config():
             self.accept()
         else:

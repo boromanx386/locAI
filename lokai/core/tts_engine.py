@@ -160,6 +160,9 @@ class TTSEngine:
         text = re.sub(r'```[\s\S]*?```', '', text)
         text = re.sub(r'`[^`]+`', '', text)
         
+        # Remove asterisks (*) only
+        text = text.replace('*', '')
+        
         # Remove URLs
         text = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', '', text)
         

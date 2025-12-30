@@ -163,10 +163,15 @@ class ImageGenerationWorker(QThread):
                 self.error_occurred.emit("Failed to generate image")
                 return
 
-            # Save image to temp file
+            # Save image to output folder
             self.progress_updated.emit(95)
-            output_dir = Path(self.config_manager.get_config_dir()) / "generated_images"
-            output_dir.mkdir(exist_ok=True)
+            # Get output path from config, fallback to default
+            output_path = self.config_manager.get("image_gen.output_path")
+            if output_path:
+                output_dir = Path(output_path)
+            else:
+                output_dir = Path(self.config_manager.get_config_dir()) / "generated_images"
+            output_dir.mkdir(parents=True, exist_ok=True)
 
             import time
 
