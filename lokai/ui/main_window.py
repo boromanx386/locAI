@@ -40,6 +40,7 @@ from lokai.core.chat_vector_store import ChatVectorStore
 from lokai.ui.image_worker import ImageGenerationWorker
 from lokai.ui.video_worker import VideoGenerationWorker
 from lokai.ui.audio_worker import AudioGenerationWorker
+from lokai.core.asr_engine import ASREngine
 
 
 class MainWindow(QMainWindow):
@@ -109,6 +110,7 @@ class MainWindow(QMainWindow):
         # Image generation seed management
         self.last_image_seed = None  # Last seed used for image generation
         self.seed_locked = False  # Whether seed is locked
+        self.current_seed = None  # Current seed displayed in status bar
 
         # Track last used model for GPU memory management
         self.last_used_model = None
@@ -374,15 +376,7 @@ class MainWindow(QMainWindow):
     def _init_tts_engine(self):
         """Initialize TTS engine if enabled."""
         try:
-            from lokai.core.tts_engine import TTSEngine, KOKORO_AVAILABLE
-
-            # Check if Kokoro is available
-            if not KOKORO_AVAILABLE:
-                print(
-                    "Kokoro TTS not available. Install with: pip install kokoro soundfile"
-                )
-                self.tts_engine = None
-                return
+            from lokai.core.tts_engine import create_tts_engine, KOKORO_AVAILABLE, POCKET_TTS_AVAILABLE
 
             # Check if TTS is enabled
             if not self.config_manager.get("tts.enabled", True):
@@ -390,28 +384,63 @@ class MainWindow(QMainWindow):
                 return
 
             # Get TTS settings
-            lang_code = self.config_manager.get("tts.lang_code", "a")
+            engine = self.config_manager.get("tts.engine", "kokoro")
             voice = self.config_manager.get("tts.voice", "af_heart")
+            speed = self.config_manager.get("tts.speed", 1.0)
+
+            # Check if selected engine is available
+            if engine == "kokoro" and not KOKORO_AVAILABLE:
+                print("Kokoro TTS not available. Install with: pip install kokoro soundfile")
+                self.tts_engine = None
+                return
+            elif engine == "pocket_tts" and not POCKET_TTS_AVAILABLE:
+                print("Pocket TTS not available. Install with: pip install pocket-tts scipy")
+                self.tts_engine = None
+                return
 
             # Callback when TTS finishes
             def on_tts_finished():
                 self.status_panel.set_tts_playing(False)
 
-            # Initialize TTS engine
-            self.tts_engine = TTSEngine(
-                lang_code=lang_code, voice=voice, on_finished=on_tts_finished
-            )
+            # Create TTS engine based on config
+            if engine == "kokoro":
+                lang_code = self.config_manager.get("tts.lang_code", "a")
+                self.tts_engine = create_tts_engine(
+                    "kokoro",
+                    lang_code=lang_code,
+                    voice=voice,
+                    on_finished=on_tts_finished
+                )
+                # Update voices in status panel
+                if hasattr(self.status_panel, "update_voices_for_language"):
+                    self.status_panel.update_voices_for_language(lang_code, "kokoro", False)
+                
+                print(f"TTS engine initialized: engine=Kokoro, lang={lang_code}, voice={voice}")
+            else:  # pocket_tts
+                voice_cloning_enabled = self.config_manager.get("tts.voice_cloning.enabled", False)
+                voice_cloning_file = self.config_manager.get("tts.voice_cloning.file_path", None)
+                
+                # If voice is "Clone Voice", use cloning file; otherwise use the selected voice
+                actual_voice = voice if voice != "Clone Voice" else "alba"
+                actual_cloning_file = voice_cloning_file if voice == "Clone Voice" and voice_cloning_enabled else None
+                
+                self.tts_engine = create_tts_engine(
+                    "pocket_tts",
+                    voice=actual_voice,
+                    voice_cloning_file=actual_cloning_file,
+                    on_finished=on_tts_finished
+                )
+                # Update voices in status panel (include "Clone Voice" if enabled)
+                if hasattr(self.status_panel, "update_voices_for_language"):
+                    self.status_panel.update_voices_for_language(None, "pocket_tts", voice_cloning_enabled)
+                
+                print(f"TTS engine initialized: engine=Pocket TTS, voice={voice}, cloning={voice == 'Clone Voice'}")
 
-            # Set speed if configured
-            speed = self.config_manager.get("tts.speed", 1.0)
+            # Set speed
             if hasattr(self.tts_engine, "speed"):
                 self.tts_engine.speed = speed
 
-            # Update voices in status panel based on language
-            if hasattr(self.status_panel, "update_voices_for_language"):
-                self.status_panel.update_voices_for_language(lang_code)
-
-            # Set voice from config after voices are loaded
+            # Set voice from config
             if hasattr(self.status_panel, "tts_voice_combo"):
                 index = self.status_panel.tts_voice_combo.findText(voice)
                 if index >= 0:
@@ -425,14 +454,41 @@ class MainWindow(QMainWindow):
                         self.config_manager.set("tts.voice", first_voice)
                         self.config_manager.save_config()
 
-            print(f"TTS engine initialized: lang={lang_code}, voice={voice}")
-
         except Exception as e:
             print(f"Error initializing TTS engine: {e}")
             import traceback
 
             traceback.print_exc()
             self.tts_engine = None
+
+    def _init_asr_engine(self):
+        """Initialize ASR engine if enabled."""
+        try:
+            asr_enabled = self.config_manager.get("asr.enabled", False)
+            if not asr_enabled:
+                print("ASR disabled in config")
+                return
+
+            from lokai.core.asr_engine import ASREngine
+
+            # Use asr.storage_path if set, otherwise fallback to models.storage_path
+            storage_path = self.config_manager.get("asr.storage_path")
+            if not storage_path:
+                storage_path = self.config_manager.get("models.storage_path")
+            self.asr_engine = ASREngine(storage_path)
+
+            if not self.asr_engine.is_available():
+                print("ASR engine not available (NeMo not installed)")
+                self.asr_engine = None
+                return
+
+            print("ASR engine initialized")
+
+        except Exception as e:
+            print(f"Error initializing ASR engine: {e}")
+            import traceback
+            traceback.print_exc()
+            self.asr_engine = None
 
     def _init_global_shortcuts(self):
         """Initialize global keyboard shortcuts for system-wide text selection."""
@@ -542,6 +598,8 @@ class MainWindow(QMainWindow):
         )
         self.chat_widget.image_prompt_sent.connect(self.on_image_prompt_sent)
         self.chat_widget.seed_lock_toggled.connect(self.on_seed_lock_toggled)
+        self.chat_widget.seed_increase_requested.connect(self.on_seed_increase)
+        self.chat_widget.seed_decrease_requested.connect(self.on_seed_decrease)
         self.chat_widget.text_selected_for_tts.connect(self.on_text_selected_for_tts)
         self.chat_widget.text_selected_for_image.connect(
             self.on_text_selected_for_image
@@ -559,6 +617,10 @@ class MainWindow(QMainWindow):
         self._init_video_generator()
         self._init_audio_generator()
 
+        # Initialize ASR engine (if enabled)
+        self.asr_engine = None
+        self._init_asr_engine()
+
         # Connect video generation signal
         self.chat_widget.image_selected_for_video.connect(
             self.on_image_selected_for_video
@@ -567,17 +629,14 @@ class MainWindow(QMainWindow):
         # Initialize TTS engine
         self.tts_engine = None
         self._init_tts_engine()
+        # Note: _init_tts_engine already calls update_voices_for_language, so we don't need to call it again here
 
-        # Ensure voices are loaded in status panel (in case TTS is disabled)
-        if hasattr(self.status_panel, "update_voices_for_language"):
-            lang_code = self.config_manager.get("tts.lang_code", "a")
-            self.status_panel.update_voices_for_language(lang_code)
-            # Set voice from config
+        # Set voice from config in status panel (voices are already loaded by _init_tts_engine)
+        if hasattr(self.status_panel, "tts_voice_combo"):
             voice = self.config_manager.get("tts.voice", "af_heart")
-            if hasattr(self.status_panel, "tts_voice_combo"):
-                index = self.status_panel.tts_voice_combo.findText(voice)
-                if index >= 0:
-                    self.status_panel.tts_voice_combo.setCurrentIndex(index)
+            index = self.status_panel.tts_voice_combo.findText(voice)
+            if index >= 0:
+                self.status_panel.tts_voice_combo.setCurrentIndex(index)
 
         # Initialize global shortcuts for system-wide text selection
         self._init_global_shortcuts()
@@ -688,7 +747,8 @@ class MainWindow(QMainWindow):
 
                 if not has_models:
                     # Only load models if list is empty
-                    models, model_error = self.ollama_detector.get_installed_models()
+                    # Get LLM and Vision models (exclude embedding)
+                    models, model_error = self.ollama_detector.get_llm_and_vision_models()
                     if models:
                         self.status_panel.update_models(models)
                     self.status_bar.showMessage("Ollama is running")
@@ -793,8 +853,7 @@ class MainWindow(QMainWindow):
 
     def on_message_sent(self, message: str, image_path: str = ""):
         """Handle message sent from chat widget."""
-        # Quick status check before sending (throttled - only if not checked recently)
-        self.check_ollama_status(force=False)
+        # Status check removed to avoid blocking UI
 
         # Get selected model
         model = self.status_panel.get_selected_model()
@@ -1212,56 +1271,16 @@ class MainWindow(QMainWindow):
             if storage_path:
                 self._init_image_generator()
 
-            # Update TTS engine settings if needed (don't reinitialize if not necessary)
-            new_lang_code = self.config_manager.get("tts.lang_code", "a")
-            new_voice = self.config_manager.get("tts.voice", "af_heart")
-            new_speed = self.config_manager.get("tts.speed", 1.0)
-            tts_enabled = self.config_manager.get("tts.enabled", True)
+            # Update TTS engine settings
+            # Always reinitialize TTS engine when settings dialog closes
+            # This ensures engine, language, voice, and voice cloning settings are all updated
+            self._init_tts_engine()
+            
+            # Reinitialize ASR engine if settings changed
+            self._init_asr_engine()
 
-            # Check if we need to reinitialize TTS engine
-            needs_reinit = False
-            if not tts_enabled:
-                if self.tts_engine is not None:
-                    self.tts_engine = None
-            elif self.tts_engine is None:
-                # No engine exists, need to create one
-                needs_reinit = True
-            elif hasattr(self.tts_engine, "lang_code") and hasattr(
-                self.tts_engine, "voice"
-            ):
-                # Check if settings changed
-                if (
-                    self.tts_engine.lang_code != new_lang_code
-                    or self.tts_engine.voice != new_voice
-                ):
-                    needs_reinit = True
-                elif (
-                    hasattr(self.tts_engine, "speed")
-                    and self.tts_engine.speed != new_speed
-                ):
-                    # Just update speed if only that changed
-                    self.tts_engine.speed = new_speed
-            else:
-                # Can't check, assume we need to reinit
-                needs_reinit = True
-
-            if needs_reinit and tts_enabled:
-                self._init_tts_engine()
-            elif self.tts_engine and hasattr(self.tts_engine, "speed"):
-                # Just update speed if only that changed
-                self.tts_engine.speed = new_speed
-
-            # Update status panel voice dropdown based on current language
-            lang_code = new_lang_code
-            if hasattr(self.status_panel, "update_voices_for_language"):
-                self.status_panel.update_voices_for_language(lang_code)
-
-            voice = new_voice
-            if hasattr(self.status_panel, "tts_voice_combo"):
-                # Wait a bit for voices to update
-                from PySide6.QtCore import QTimer
-
-                QTimer.singleShot(100, lambda: self._update_status_voice(voice))
+            # Status panel voices are already updated in _init_tts_engine()
+            # Voice is already set in _init_tts_engine(), no need to update again here
 
             # Refresh cached config values for current model
             if self._current_model:
@@ -1688,12 +1707,65 @@ class MainWindow(QMainWindow):
     def on_seed_lock_toggled(self, locked: bool):
         """Handle seed lock toggle from chat widget."""
         self.seed_locked = locked
+        if locked and self.last_image_seed is not None:
+            self.current_seed = self.last_image_seed
+            self.update_seed_display()
+        else:
+            self.current_seed = None
+            self.update_seed_display()
+
+    def update_seed_display(self):
+        """Update seed display in status bar."""
+        if self.current_seed is not None and self.seed_locked:
+            mode = (
+                "Image"
+                if self.chat_widget.image_mode
+                else "Audio" if self.chat_widget.audio_mode else ""
+            )
+            if mode:
+                self.status_bar.showMessage(f"Seed ({mode}): {self.current_seed}")
+            else:
+                current_msg = self.status_bar.currentMessage()
+                if current_msg and "Seed" in current_msg:
+                    self.status_bar.showMessage("Ready")
+        else:
+            current_msg = self.status_bar.currentMessage()
+            if current_msg and "Seed" in current_msg:
+                self.status_bar.showMessage("Ready")
+
+    def on_seed_increase(self):
+        """Increase current seed by 1."""
+        import random
+
+        if self.current_seed is None:
+            if self.last_image_seed is not None:
+                self.current_seed = self.last_image_seed
+            else:
+                self.current_seed = random.randint(0, 2147483647)
+        else:
+            self.current_seed = (self.current_seed + 1) % 2147483648
+        self.last_image_seed = self.current_seed
+        if self.seed_locked:
+            self.update_seed_display()
+
+    def on_seed_decrease(self):
+        """Decrease current seed by 1."""
+        import random
+
+        if self.current_seed is None:
+            if self.last_image_seed is not None:
+                self.current_seed = self.last_image_seed
+            else:
+                self.current_seed = random.randint(0, 2147483647)
+        else:
+            self.current_seed = (self.current_seed - 1) % 2147483648
+        self.last_image_seed = self.current_seed
+        if self.seed_locked:
+            self.update_seed_display()
 
     def on_tts_play(self):
         """Handle TTS play button click."""
-        print(
-            f"TTS Play clicked. Engine: {self.tts_engine}, Pipeline: {self.tts_engine.pipeline if self.tts_engine else None}"
-        )
+        print(f"TTS Play clicked. Engine: {self.tts_engine}")
 
         if not self.tts_engine:
             self.status_bar.showMessage(
@@ -1702,9 +1774,16 @@ class MainWindow(QMainWindow):
             print("TTS engine not initialized")
             return
 
-        if not self.tts_engine.pipeline:
-            self.status_bar.showMessage("TTS pipeline not ready. Please wait...")
-            print("TTS pipeline not ready")
+        # Check if engine is ready (different for Kokoro vs Pocket TTS)
+        is_ready = False
+        if hasattr(self.tts_engine, "pipeline"):
+            is_ready = self.tts_engine.pipeline is not None
+        elif hasattr(self.tts_engine, "model"):
+            is_ready = self.tts_engine.model is not None and self.tts_engine.voice_state is not None
+        
+        if not is_ready:
+            self.status_bar.showMessage("TTS not ready. Please wait...")
+            print("TTS not ready")
             return
 
         # Get last AI response from conversation history
@@ -1761,7 +1840,21 @@ class MainWindow(QMainWindow):
     def on_tts_voice_changed(self, voice: str):
         """Handle TTS voice selection change."""
         if self.tts_engine:
-            self.tts_engine.set_voice(voice)
+            engine = self.config_manager.get("tts.engine", "kokoro")
+            
+            if engine == "pocket_tts" and voice == "Clone Voice":
+                # Use voice cloning
+                voice_cloning_file = self.config_manager.get("tts.voice_cloning.file_path", None)
+                if voice_cloning_file and hasattr(self.tts_engine, "set_voice_cloning_file"):
+                    self.tts_engine.set_voice_cloning_file(voice_cloning_file)
+            else:
+                # Use regular voice
+                if hasattr(self.tts_engine, "set_voice_cloning_file"):
+                    # Disable voice cloning first (for Pocket TTS)
+                    self.tts_engine.set_voice_cloning_file(None)
+                if hasattr(self.tts_engine, "set_voice"):
+                    self.tts_engine.set_voice(voice)
+            
             # Save to config
             self.config_manager.set("tts.voice", voice)
             self.config_manager.save_config()
@@ -1769,13 +1862,16 @@ class MainWindow(QMainWindow):
     def on_tts_language_changed(self, lang_code: str):
         """Handle TTS language selection change (from Settings)."""
         if self.tts_engine:
-            self.tts_engine.set_lang_code(lang_code)
+            # Only Kokoro supports language change
+            if hasattr(self.tts_engine, "set_lang_code"):
+                self.tts_engine.set_lang_code(lang_code)
             # Save to config
             self.config_manager.set("tts.lang_code", lang_code)
             self.config_manager.save_config()
             # Update voice dropdown in status panel
+            engine = self.config_manager.get("tts.engine", "kokoro")
             if hasattr(self.status_panel, "update_voices_for_language"):
-                self.status_panel.update_voices_for_language(lang_code)
+                self.status_panel.update_voices_for_language(lang_code, engine)
 
     def _speak_text(self, text: str):
         """Helper method to speak text and update UI."""
@@ -1820,6 +1916,9 @@ class MainWindow(QMainWindow):
             # Generate random seed
             seed_to_use = random.randint(0, 2147483647)
             self.last_image_seed = seed_to_use
+        self.current_seed = seed_to_use
+        if self.seed_locked:
+            self.update_seed_display()
 
         # Show generating message
         generating_bubble = self.chat_widget.messages_layout.itemAt(
@@ -1884,8 +1983,15 @@ class MainWindow(QMainWindow):
             )
             return
 
-        if not self.tts_engine.pipeline:
-            self.status_bar.showMessage("TTS pipeline not ready. Please wait...")
+        # Check if engine is ready
+        is_ready = False
+        if hasattr(self.tts_engine, "pipeline"):
+            is_ready = self.tts_engine.pipeline is not None
+        elif hasattr(self.tts_engine, "model"):
+            is_ready = self.tts_engine.model is not None and self.tts_engine.voice_state is not None
+        
+        if not is_ready:
+            self.status_bar.showMessage("TTS not ready. Please wait...")
             return
 
         # Clean and speak the selected text
@@ -1945,6 +2051,9 @@ class MainWindow(QMainWindow):
             # Generate random seed
             seed_to_use = random.randint(0, 2147483647)
             self.last_image_seed = seed_to_use
+        self.current_seed = seed_to_use
+        if self.seed_locked:
+            self.update_seed_display()
 
         # Start audio generation in background thread
         worker = AudioGenerationWorker(
@@ -2240,6 +2349,13 @@ class MainWindow(QMainWindow):
                     self.image_generator.unload_model()
             except Exception as e:
                 print(f"Error unloading image generator: {e}")
+
+        # Unload ASR engine model
+        if hasattr(self, "asr_engine") and self.asr_engine:
+            try:
+                self.asr_engine.unload_model()
+            except Exception as e:
+                print(f"Error unloading ASR engine: {e}")
 
         # Force final GPU memory cleanup (aggressive)
         try:

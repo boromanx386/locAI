@@ -251,14 +251,21 @@ class VideoGenerator:
             # Generate video frames
             # Use smaller decode_chunk_size to reduce VRAM usage
             decode_chunk_size = 4  # Reduced from 8 to save VRAM (can go to 2 if needed)
-            frames = self.pipeline(
-                image,
-                decode_chunk_size=decode_chunk_size,
-                generator=generator,
-                num_frames=num_frames,
-                num_inference_steps=num_inference_steps,
-                motion_bucket_id=motion_bucket_id,
-            ).frames[0]
+            
+            pipeline_kwargs = {
+                "image": image,
+                "decode_chunk_size": decode_chunk_size,
+                "generator": generator,
+                "num_frames": num_frames,
+                "num_inference_steps": num_inference_steps,
+                "motion_bucket_id": motion_bucket_id,
+            }
+
+            # Add callback if provided
+            if callback:
+                pipeline_kwargs["callback_on_step_end"] = callback
+
+            frames = self.pipeline(**pipeline_kwargs).frames[0]
 
             # SVD pipeline ALWAYS outputs 1024x576 (landscape), so rotate frames if user wants portrait
             if resolution == "576x1024":

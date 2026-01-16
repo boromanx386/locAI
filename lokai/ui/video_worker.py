@@ -63,8 +63,29 @@ class VideoGenerationWorker(QThread):
                 )
                 self.progress_updated.emit(50)
 
-            # Generate video
-            self.progress_updated.emit(60)
+            # Progress callback using callback_on_step_end signature
+            # Signature: (pipe, step_index, timestep, callback_kwargs)
+            # step_index is 0-based, so step_index=0 is first step, step_index=steps-1 is last step
+            def progress_callback(pipe, step_index, timestep, callback_kwargs):
+                try:
+                    # Calculate progress: 50% (loading) + 40% (generation) = 90%
+                    # step_index is 0-based, so we add 1 to get current step (1 to steps)
+                    if num_inference_steps > 0 and step_index is not None:
+                        # step_index goes from 0 to num_inference_steps-1, so (step_index + 1) / num_inference_steps gives progress
+                        current_step = step_index + 1
+                        progress = 50 + int((current_step / num_inference_steps) * 40)
+                        # Clamp to 90% max (remaining 10% for saving/export)
+                        progress = min(progress, 90)
+                        self.progress_updated.emit(progress)
+                except Exception as e:
+                    # Ignore callback errors
+                    pass
+
+                # Must return callback_kwargs
+                return callback_kwargs if callback_kwargs is not None else {}
+
+            # Generate video (start at 50% since model is loaded)
+            self.progress_updated.emit(50)
             video_path = self.video_generator.generate_video_from_image(
                 image=image,
                 num_frames=num_frames,
@@ -73,12 +94,14 @@ class VideoGenerationWorker(QThread):
                 fps=fps,
                 seed=self.seed,
                 resolution=resolution,
+                callback=progress_callback,
             )
 
             if video_path is None:
                 self.error_occurred.emit("Failed to generate video")
                 return
 
+            # Export is done in generator, so we're at 100%
             self.progress_updated.emit(100)
             self.video_generated.emit(video_path)
 

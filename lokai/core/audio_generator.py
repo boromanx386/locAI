@@ -140,6 +140,7 @@ class AudioGenerator:
         seed: Optional[int] = None,
         callback: Optional[callable] = None,
         num_waveforms_per_prompt: int = 1,
+        output_path: Optional[str] = None,
     ) -> Optional[str]:
         """
         Generate audio from text prompt.
@@ -189,6 +190,8 @@ class AudioGenerator:
             print(f"[AudioGenerator] Generating audio: '{prompt[:50]}...'")
             print(f"[AudioGenerator] Length: {audio_length_in_s}s, Steps: {num_inference_steps}, Variations: {num_waveforms_per_prompt}")
 
+            # Note: StableAudioPipeline doesn't support callback_on_step_end
+            # Progress will be updated manually in the worker using timer-based simulation
             output = self.pipeline(
                 prompt=prompt,
                 negative_prompt=negative_prompt,
@@ -203,7 +206,9 @@ class AudioGenerator:
             sample_rate = self.pipeline.vae.sampling_rate
             
             # Save to output directory
-            if self.storage_path:
+            if output_path:
+                output_dir = Path(output_path)
+            elif self.storage_path:
                 output_dir = Path(self.storage_path) / "generated_audio"
             else:
                 from lokai.core.config_manager import ConfigManager

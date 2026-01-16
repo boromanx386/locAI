@@ -130,12 +130,15 @@ class ImageGenerationWorker(QThread):
             # Progress callback using callback_on_step_end signature
             # Signature: (pipe, step_index, timestep, callback_kwargs)
             # Must return callback_kwargs (or modified version)
+            # step_index is 0-based, so step_index=0 is first step, step_index=steps-1 is last step
             def progress_callback(pipe, step_index, timestep, callback_kwargs):
                 try:
                     # Calculate progress: 30% (loading) + 60% (generation) = 90%
-                    # step_index is 0-based, steps is total steps
+                    # step_index is 0-based, so we add 1 to get current step (1 to steps)
                     if steps > 0 and step_index is not None:
-                        progress = 30 + int((step_index / steps) * 60)
+                        # step_index goes from 0 to steps-1, so (step_index + 1) / steps gives progress
+                        current_step = step_index + 1
+                        progress = 30 + int((current_step / steps) * 60)
                         # Clamp to 90% max (remaining 10% for saving)
                         progress = min(progress, 90)
                         self.progress_updated.emit(progress)
@@ -146,8 +149,8 @@ class ImageGenerationWorker(QThread):
                 # Must return callback_kwargs (or modified version)
                 return callback_kwargs if callback_kwargs is not None else {}
 
-            # Generate image
-            self.progress_updated.emit(40)
+            # Generate image (start at 30% since model is loaded)
+            self.progress_updated.emit(30)
             image = self.image_generator.generate_image(
                 prompt=self.prompt,
                 negative_prompt=negative_prompt,

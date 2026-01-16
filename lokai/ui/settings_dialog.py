@@ -68,10 +68,6 @@ class SettingsDialog(QDialog):
         self.ollama_tab = self.create_ollama_tab()
         self.tabs.addTab(self.ollama_tab, "Ollama")
 
-        # Models tab
-        self.models_tab = self.create_models_tab()
-        self.tabs.addTab(self.models_tab, "Models")
-
         # Image Generation tab
         self.image_gen_tab = self.create_image_gen_tab()
         self.tabs.addTab(self.image_gen_tab, "Image Generation")
@@ -91,6 +87,10 @@ class SettingsDialog(QDialog):
         # TTS tab
         self.tts_tab = self.create_tts_tab()
         self.tabs.addTab(self.tts_tab, "TTS")
+
+        # ASR tab
+        self.asr_tab = self.create_asr_tab()
+        self.tabs.addTab(self.asr_tab, "ASR")
 
         # Semantic Memory tab
         self.rag_tab = self.create_rag_tab()
@@ -266,19 +266,21 @@ class SettingsDialog(QDialog):
         widget.setLayout(layout)
         return widget
 
-    def create_models_tab(self) -> QWidget:
-        """Create Models settings tab."""
+    def create_image_gen_tab(self) -> QWidget:
+        """Create Image Generation settings tab."""
         widget = QWidget()
         layout = QVBoxLayout()
         layout.setSpacing(12)
 
+        # Model Storage section (moved from Models tab)
         models_group = QGroupBox("Model Storage")
         models_layout = QVBoxLayout()
 
         path_layout = QHBoxLayout()
         self.model_path_edit = QLineEdit()
         self.model_path_edit.setReadOnly(True)
-        path_layout.addWidget(self.model_path_edit)
+        self.model_path_edit.setPlaceholderText("Select folder with image models...")
+        path_layout.addWidget(self.model_path_edit, stretch=1)
 
         self.browse_btn = QPushButton("Browse...")
         self.browse_btn.clicked.connect(self.browse_model_path)
@@ -291,16 +293,6 @@ class SettingsDialog(QDialog):
 
         models_group.setLayout(models_layout)
         layout.addWidget(models_group)
-
-        layout.addStretch()
-        widget.setLayout(layout)
-        return widget
-
-    def create_image_gen_tab(self) -> QWidget:
-        """Create Image Generation settings tab."""
-        widget = QWidget()
-        layout = QVBoxLayout()
-        layout.setSpacing(12)
 
         image_group = QGroupBox("Image Generation Settings")
         image_layout = QFormLayout()
@@ -912,11 +904,17 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout()
         layout.setSpacing(12)
 
-        tts_group = QGroupBox("Text-to-Speech (Kokoro)")
+        tts_group = QGroupBox("Text-to-Speech")
         tts_layout = QFormLayout()
 
         self.tts_enabled_check = QCheckBox("Enable TTS")
         tts_layout.addRow("", self.tts_enabled_check)
+
+        # TTS Engine selection
+        self.tts_engine_combo = QComboBox()
+        self.tts_engine_combo.addItems(["Kokoro-82M", "Pocket TTS"])
+        self.tts_engine_combo.currentTextChanged.connect(self.on_tts_engine_changed)
+        tts_layout.addRow("TTS Engine:", self.tts_engine_combo)
 
         # Language selection
         self.lang_code_combo = QComboBox()
@@ -955,6 +953,93 @@ class SettingsDialog(QDialog):
 
         tts_group.setLayout(tts_layout)
         layout.addWidget(tts_group)
+
+        # Voice Cloning (samo za Pocket TTS)
+        voice_cloning_group = QGroupBox("Voice Cloning (Pocket TTS only)")
+        cloning_layout = QVBoxLayout()
+
+        self.voice_cloning_enabled_check = QCheckBox("Enable Voice Cloning")
+        cloning_layout.addWidget(self.voice_cloning_enabled_check)
+
+        file_layout = QHBoxLayout()
+        self.voice_cloning_file_edit = QLineEdit()
+        self.voice_cloning_file_edit.setPlaceholderText("Select audio file for voice cloning...")
+        self.voice_cloning_browse_btn = QPushButton("Browse...")
+        self.voice_cloning_browse_btn.clicked.connect(self.browse_voice_cloning_file)
+        file_layout.addWidget(self.voice_cloning_file_edit)
+        file_layout.addWidget(self.voice_cloning_browse_btn)
+        cloning_layout.addLayout(file_layout)
+
+        info_label = QLabel("Note: Audio file will be converted to PCM int16 format automatically.")
+        info_label.setStyleSheet("color: gray; font-size: 10px;")
+        cloning_layout.addWidget(info_label)
+
+        voice_cloning_group.setLayout(cloning_layout)
+        layout.addWidget(voice_cloning_group)
+
+        # Initially hide if Kokoro is selected
+        self.voice_cloning_group = voice_cloning_group
+
+        layout.addStretch()
+        widget.setLayout(layout)
+        return widget
+
+    def create_asr_tab(self) -> QWidget:
+        """Create ASR settings tab."""
+        widget = QWidget()
+        layout = QVBoxLayout()
+        layout.setSpacing(12)
+
+        asr_group = QGroupBox("Automatic Speech Recognition")
+        asr_layout = QFormLayout()
+
+        self.asr_enabled_check = QCheckBox("Enable ASR")
+        asr_layout.addRow("", self.asr_enabled_check)
+
+        # ASR Model selection
+        self.asr_model_combo = QComboBox()
+        self.asr_model_combo.addItems([
+            "nvidia/nemotron-speech-streaming-en-0.6b",
+        ])
+        asr_layout.addRow("ASR Model:", self.asr_model_combo)
+
+        # Chunk size selection
+        self.chunk_size_combo = QComboBox()
+        self.chunk_size_combo.addItems([
+            "80ms (Lowest latency)",
+            "160ms (Low latency)",
+            "560ms (Balanced)",
+            "1120ms (Highest accuracy)"
+        ])
+        self.chunk_size_combo.setCurrentIndex(2)  # Default to balanced
+        asr_layout.addRow("Chunk Size:", self.chunk_size_combo)
+
+        # Language selection (for future multi-language support)
+        self.asr_language_combo = QComboBox()
+        self.asr_language_combo.addItems([
+            "English (en)",
+        ])
+        asr_layout.addRow("Language:", self.asr_language_combo)
+
+        # Punctuation & Capitalization
+        self.punctuation_check = QCheckBox("Punctuation & Capitalization")
+        self.punctuation_check.setChecked(True)
+        asr_layout.addRow("", self.punctuation_check)
+
+        asr_group.setLayout(asr_layout)
+        layout.addWidget(asr_group)
+
+        # Audio Input Settings
+        audio_group = QGroupBox("Audio Input")
+        audio_layout = QFormLayout()
+
+        # Microphone device selection
+        self.mic_device_combo = QComboBox()
+        self._populate_microphone_devices()
+        audio_layout.addRow("Microphone:", self.mic_device_combo)
+
+        audio_group.setLayout(audio_layout)
+        layout.addWidget(audio_group)
 
         layout.addStretch()
         widget.setLayout(layout)
@@ -1277,6 +1362,46 @@ class SettingsDialog(QDialog):
             # Select first voice if previous not available
             if voices:
                 self.voice_combo.setCurrentIndex(0)
+
+    def on_tts_engine_changed(self, engine_text: str):
+        """Handle TTS engine selection change."""
+        is_pocket_tts = (engine_text == "Pocket TTS")
+        
+        # Show/hide language selector (Pocket TTS only English)
+        self.lang_code_combo.setEnabled(not is_pocket_tts)
+        
+        # Show/hide voice cloning options
+        self.voice_cloning_group.setVisible(is_pocket_tts)
+        
+        # Update voices for current engine
+        if is_pocket_tts:
+            # Pocket TTS voices (English only)
+            voices = ['alba', 'marius', 'javert', 'jean', 'fantine', 'cosette', 'eponine', 'azelma']
+            self.voice_combo.clear()
+            self.voice_combo.addItems(voices)
+        else:
+            # Kokoro voices (update based on selected language)
+            lang_code = self._get_lang_code_from_text(self.lang_code_combo.currentText())
+            self.update_voices_for_language(lang_code)
+
+    def _get_lang_code_from_text(self, lang_text: str) -> str:
+        """Extract lang_code from language dropdown text."""
+        # Extract lang_code from text (e.g., "American English (a)" -> "a")
+        if "(" in lang_text and ")" in lang_text:
+            return lang_text.split("(")[1].split(")")[0]
+        return "a"  # Default to American English
+
+    def browse_voice_cloning_file(self):
+        """Browse for voice cloning audio file."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Audio File for Voice Cloning",
+            "",
+            "Audio Files (*.wav *.mp3 *.ogg *.flac);;All Files (*.*)"
+        )
+        
+        if file_path:
+            self.voice_cloning_file_edit.setText(file_path)
 
     def browse_model_path(self):
         """Browse for model storage path."""
@@ -2095,6 +2220,16 @@ class SettingsDialog(QDialog):
         tts_enabled = self.config_manager.get("tts.enabled", True)
         self.tts_enabled_check.setChecked(tts_enabled)
 
+        # TTS Engine
+        engine = self.config_manager.get("tts.engine", "kokoro")
+        engine_text = "Kokoro-82M" if engine == "kokoro" else "Pocket TTS"
+        index = self.tts_engine_combo.findText(engine_text)
+        if index >= 0:
+            self.tts_engine_combo.setCurrentIndex(index)
+        
+        # Trigger engine change to update UI
+        self.on_tts_engine_changed(engine_text)
+
         # Language code
         lang_code = self.config_manager.get("tts.lang_code", "a")
         lang_map = {
@@ -2120,6 +2255,22 @@ class SettingsDialog(QDialog):
         index = self.voice_combo.findText(voice)
         if index >= 0:
             self.voice_combo.setCurrentIndex(index)
+
+        # Speed
+        speed = self.config_manager.get("tts.speed", 1.0)
+        self.speed_spin.setValue(speed)
+
+        # Auto-speak
+        auto_speak = self.config_manager.get("tts.auto_speak", False)
+        self.auto_speak_check.setChecked(auto_speak)
+
+        # Voice Cloning (Pocket TTS)
+        voice_cloning_enabled = self.config_manager.get("tts.voice_cloning.enabled", False)
+        self.voice_cloning_enabled_check.setChecked(voice_cloning_enabled)
+        
+        voice_cloning_file = self.config_manager.get("tts.voice_cloning.file_path", None)
+        if voice_cloning_file:
+            self.voice_cloning_file_edit.setText(voice_cloning_file)
 
         # RAG/Semantic Memory settings
         rag_enabled = self.config_manager.get("rag.enabled", False)
@@ -2175,12 +2326,16 @@ class SettingsDialog(QDialog):
         image_model = self.config_manager.get(
             "image_gen.model", "stabilityai/stable-diffusion-xl-base-1.0"
         )
-        # Try to find in combo, otherwise add as custom
+        # Try to find in combo, otherwise add as custom item first
         index = self.image_model_combo.findText(image_model)
         if index >= 0:
             self.image_model_combo.setCurrentIndex(index)
         else:
-            self.image_model_combo.setCurrentText(image_model)
+            # Add the model as an item first, then select it
+            self.image_model_combo.addItem(image_model)
+            index = self.image_model_combo.findText(image_model)
+            if index >= 0:
+                self.image_model_combo.setCurrentIndex(index)
 
         image_width = self.config_manager.get("image_gen.width", 1024)
         self.image_width_spin.setValue(image_width)
@@ -2252,13 +2407,16 @@ class SettingsDialog(QDialog):
         video_model = self.config_manager.get(
             "video_gen.model", "stabilityai/stable-video-diffusion-img2vid"
         )
-        # Try to find in combo, otherwise add as custom
+        # Try to find in combo, otherwise add as custom item first
         index = self.video_model_combo.findText(video_model)
         if index >= 0:
             self.video_model_combo.setCurrentIndex(index)
         else:
-            # Add as custom entry
-            self.video_model_combo.setCurrentText(video_model)
+            # Add the model as an item first, then select it
+            self.video_model_combo.addItem(video_model)
+            index = self.video_model_combo.findText(video_model)
+            if index >= 0:
+                self.video_model_combo.setCurrentIndex(index)
 
         video_frames = self.config_manager.get("video_gen.num_frames", 14)
         self.video_frames_spin.setValue(video_frames)
@@ -2351,6 +2509,49 @@ class SettingsDialog(QDialog):
                     item.setData(Qt.ItemDataRole.UserRole, prompt_data)
                     self.prompts_list.addItem(item)
 
+        # ASR
+        if hasattr(self, "asr_enabled_check"):
+            asr_enabled = self.config_manager.get("asr.enabled", False)
+            self.asr_enabled_check.setChecked(asr_enabled)
+
+            asr_model = self.config_manager.get("asr.model", "nvidia/nemotron-speech-streaming-en-0.6b")
+            index = self.asr_model_combo.findText(asr_model)
+            if index >= 0:
+                self.asr_model_combo.setCurrentIndex(index)
+
+            chunk_size_ms = self.config_manager.get("asr.chunk_size_ms", 560)
+            chunk_size_map_reverse = {
+                80: "80ms (Lowest latency)",
+                160: "160ms (Low latency)",
+                560: "560ms (Balanced)",
+                1120: "1120ms (Highest accuracy)"
+            }
+            chunk_size_text = chunk_size_map_reverse.get(chunk_size_ms, "560ms (Balanced)")
+            index = self.chunk_size_combo.findText(chunk_size_text)
+            if index >= 0:
+                self.chunk_size_combo.setCurrentIndex(index)
+
+            asr_lang = self.config_manager.get("asr.language", "en")
+            # Handle both "en" and "English" formats
+            if asr_lang.lower() in ["english", "en"]:
+                lang_text = "English (en)"
+            else:
+                lang_text = f"{asr_lang.capitalize()} ({asr_lang})"
+            index = self.asr_language_combo.findText(lang_text)
+            if index >= 0:
+                self.asr_language_combo.setCurrentIndex(index)
+
+            self.punctuation_check.setChecked(self.config_manager.get("asr.punctuation_capitalization", True))
+
+            # Microphone device
+            mic_device = self.config_manager.get("asr.microphone_device")
+            if mic_device is not None:
+                # Find device by data
+                for i in range(self.mic_device_combo.count()):
+                    if self.mic_device_combo.itemData(i) == mic_device:
+                        self.mic_device_combo.setCurrentIndex(i)
+                        break
+
     def save_settings(self):
         """Save settings to config."""
         # General
@@ -2441,6 +2642,11 @@ class SettingsDialog(QDialog):
         # TTS
         self.config_manager.set("tts.enabled", self.tts_enabled_check.isChecked())
 
+        # TTS Engine
+        engine_text = self.tts_engine_combo.currentText()
+        engine = "kokoro" if engine_text == "Kokoro-82M" else "pocket_tts"
+        self.config_manager.set("tts.engine", engine)
+
         # Extract lang_code from combo text (e.g., "American English (a)" -> "a")
         lang_text = self.lang_code_combo.currentText()
         lang_code = lang_text.split("(")[1].split(")")[0] if "(" in lang_text else "a"
@@ -2449,6 +2655,10 @@ class SettingsDialog(QDialog):
         self.config_manager.set("tts.voice", self.voice_combo.currentText())
         self.config_manager.set("tts.speed", self.speed_spin.value())
         self.config_manager.set("tts.auto_speak", self.auto_speak_check.isChecked())
+
+        # Voice Cloning (Pocket TTS)
+        self.config_manager.set("tts.voice_cloning.enabled", self.voice_cloning_enabled_check.isChecked())
+        self.config_manager.set("tts.voice_cloning.file_path", self.voice_cloning_file_edit.text() or None)
 
         # RAG/Semantic Memory settings
         self.config_manager.set("rag.enabled", self.rag_enabled_check.isChecked())
@@ -2562,8 +2772,49 @@ class SettingsDialog(QDialog):
             self.audio_cpu_offload_check.isChecked(),
         )
 
+        # ASR
+        if hasattr(self, "asr_enabled_check"):
+            self.config_manager.set("asr.enabled", self.asr_enabled_check.isChecked())
+            self.config_manager.set("asr.model", self.asr_model_combo.currentText())
+
+            # Map chunk size text to milliseconds
+            chunk_size_text = self.chunk_size_combo.currentText()
+            chunk_size_map = {
+                "80ms (Lowest latency)": 80,
+                "160ms (Low latency)": 160,
+                "560ms (Balanced)": 560,
+                "1120ms (Highest accuracy)": 1120
+            }
+            chunk_size_ms = chunk_size_map.get(chunk_size_text, 560)
+            self.config_manager.set("asr.chunk_size_ms", chunk_size_ms)
+
+            self.config_manager.set("asr.language", self.asr_language_combo.currentText().split(" ")[0])
+            self.config_manager.set("asr.punctuation_capitalization", self.punctuation_check.isChecked())
+
+            # Microphone device (store index or None)
+            mic_device = self.mic_device_combo.currentData()
+            self.config_manager.set("asr.microphone_device", mic_device)
+
         # Save config (only once at the end)
         if self.config_manager.save_config():
             self.accept()
         else:
             QMessageBox.warning(self, "Error", "Failed to save settings.")
+
+    def _populate_microphone_devices(self):
+        """Populate microphone device dropdown."""
+        try:
+            import sounddevice as sd
+            devices = sd.query_devices()
+            self.mic_device_combo.clear()
+            self.mic_device_combo.addItem("Default", None)
+
+            for i, device in enumerate(devices):
+                if device.get('max_input_channels', 0) > 0:  # Input device
+                    name = device.get('name', f'Device {i}')
+                    self.mic_device_combo.addItem(f"{i}: {name}", i)
+        except ImportError:
+            self.mic_device_combo.addItem("sounddevice not installed", None)
+        except Exception as e:
+            self.mic_device_combo.addItem(f"Error: {e}", None)
+

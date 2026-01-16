@@ -28,10 +28,16 @@
   },
   "tts": {
     "enabled": true,
+    "engine": "kokoro",
     "lang_code": "a",
     "voice": "af_heart",
     "speed": 1.0,
-    "auto_speak": false
+    "auto_speak": false,
+    "voice_cloning": {
+      "enabled": false,
+      "file_path": null,
+      "saved_voices": []
+    }
   },
   "image_gen": {
     "enabled": false,
@@ -113,6 +119,20 @@
     "semantic_memory_threshold": 30,
     "top_k_relevant": 5,
     "recent_messages_count": 10
+  },
+  "asr": {
+    "enabled": true,
+    "model": "nvidia/nemotron-speech-streaming-en-0.6b",
+    "storage_path": null,
+    "chunk_size_ms": 560,
+    "att_context_size": [70, 6],
+    "language": "en",
+    "punctuation_capitalization": true,
+    "microphone_device": null,
+    "auto_start_listening": false,
+    "wake_word": null,
+    "vad_threshold": 0.5,
+    "min_silence_duration": 0.5
   },
   "prompts": [],
   "first_run": true

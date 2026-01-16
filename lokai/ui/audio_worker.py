@@ -56,6 +56,7 @@ class AudioGenerationWorker(QThread):
             num_waveforms = self.config_manager.get(
                 "audio_gen.num_waveforms_per_prompt", 1
             )
+            output_path = self.config_manager.get("audio_gen.output_folder")
 
             # Load model if needed
             model_changed = self.audio_generator.current_model != model_name
@@ -66,24 +67,42 @@ class AudioGenerationWorker(QThread):
                 )
                 self.progress_updated.emit(30)
 
-            # Progress callback
-            def progress_callback(pipe, step_index, timestep, callback_kwargs):
-                try:
-                    # Calculate progress: 30% (loading) + 60% (generation) = 90%
-                    if num_inference_steps > 0 and step_index is not None:
-                        progress = 30 + int((step_index / num_inference_steps) * 60)
-                        # Clamp to 90% max (remaining 10% for saving)
-                        progress = min(progress, 90)
-                        self.progress_updated.emit(progress)
-                except Exception as e:
-                    # Ignore callback errors
-                    pass
-
-                # Must return callback_kwargs
-                return callback_kwargs if callback_kwargs is not None else {}
-
-            # Generate audio
-            self.progress_updated.emit(40)
+            # Note: StableAudioPipeline doesn't support callback_on_step_end
+            # We'll simulate progress updates using a timer-based approach
+            import threading
+            import time
+            
+            progress_active = {"value": True}
+            
+            def simulate_progress():
+                """Simulate progress updates during generation."""
+                # Start at 30% (model loaded)
+                base_progress = 30
+                max_progress = 90  # Leave 10% for saving
+                progress_range = max_progress - base_progress
+                
+                # Estimate generation time (rough estimate: ~0.1s per step)
+                estimated_time = num_inference_steps * 0.1
+                update_interval = max(0.1, estimated_time / 20)  # Update ~20 times
+                
+                current_progress = base_progress
+                start_time = time.time()
+                
+                while progress_active["value"] and current_progress < max_progress:
+                    elapsed = time.time() - start_time
+                    # Linear progress based on estimated time
+                    if estimated_time > 0:
+                        progress_ratio = min(1.0, elapsed / estimated_time)
+                        current_progress = base_progress + int(progress_ratio * progress_range)
+                        self.progress_updated.emit(current_progress)
+                    time.sleep(update_interval)
+            
+            # Start progress simulation
+            progress_thread = threading.Thread(target=simulate_progress, daemon=True)
+            progress_thread.start()
+            
+            # Generate audio (start at 30% since model is loaded)
+            self.progress_updated.emit(30)
             audio_path = self.audio_generator.generate_audio_from_text(
                 prompt=self.prompt,
                 negative_prompt=negative_prompt,
@@ -91,14 +110,19 @@ class AudioGenerationWorker(QThread):
                 num_inference_steps=num_inference_steps,
                 guidance_scale=guidance_scale,
                 seed=self.seed,
-                callback=progress_callback,
+                callback=None,  # StableAudioPipeline doesn't support callbacks
                 num_waveforms_per_prompt=num_waveforms,
+                output_path=output_path,
             )
+            
+            # Stop progress simulation
+            progress_active["value"] = False
 
             if audio_path is None:
                 self.error_occurred.emit("Failed to generate audio")
                 return
 
+            # Saving is done in generator, so we're at 100%
             self.progress_updated.emit(100)
             self.audio_generated.emit(audio_path)
 

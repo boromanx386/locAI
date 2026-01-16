@@ -18,6 +18,8 @@ if os.path.exists("Q:\\"):
     os.environ["HF_DATASETS_CACHE"] = hf_cache
     os.environ["DIFFUSERS_CACHE"] = os.path.join(hf_cache, "diffusers")
     os.environ["HF_DIFFUSERS_CACHE"] = os.path.join(hf_cache, "diffusers")
+    # Set higher timeout for large model downloads (ASR models can be 600MB-1GB)
+    os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "300"  # 5 minutes
     # Also set HF_HUB_DISABLE_SYMLINKS_WARNING to suppress warnings
     os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
     print(f"[MAIN] Using Q: drive for Hugging Face cache: {hf_cache}")

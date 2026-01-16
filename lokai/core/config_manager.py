@@ -6,7 +6,7 @@ Handles loading, saving, and validation of application configuration.
 import json
 import os
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 
 class ConfigManager:
@@ -266,6 +266,81 @@ class ConfigManager:
     def set_auto_apply_presets(self, enabled: bool) -> None:
         """Set auto-apply presets setting."""
         self.set("image_gen.auto_apply_presets", enabled)
+
+    # Saved Cloned Voices methods
+    def get_saved_cloned_voices(self) -> List[Dict[str, Any]]:
+        """
+        Get all saved cloned voices.
+
+        Returns:
+            List of saved voice dictionaries with keys: name, file_path, created
+        """
+        return self.get("tts.voice_cloning.saved_voices", [])
+
+    def get_saved_cloned_voice(self, name: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a specific saved cloned voice by name.
+
+        Args:
+            name: Voice name
+
+        Returns:
+            Voice dictionary or None if not found
+        """
+        saved_voices = self.get_saved_cloned_voices()
+        for voice in saved_voices:
+            if voice.get("name") == name:
+                return voice
+        return None
+
+    def add_saved_cloned_voice(self, name: str, file_path: str, converted_file_path: Optional[str] = None) -> None:
+        """
+        Add or update a saved cloned voice.
+
+        Args:
+            name: Voice name
+            file_path: Path to original audio file
+            converted_file_path: Optional path to pre-converted PCM int16 file (for faster loading)
+        """
+        saved_voices = self.get_saved_cloned_voices()
+        
+        # Remove existing voice with same name if exists
+        saved_voices = [v for v in saved_voices if v.get("name") != name]
+        
+        # Add new voice
+        from datetime import datetime
+        new_voice = {
+            "name": name,
+            "file_path": file_path,
+            "created": datetime.now().isoformat()
+        }
+        
+        # Add converted file path if provided
+        if converted_file_path:
+            new_voice["converted_file_path"] = converted_file_path
+        
+        saved_voices.append(new_voice)
+        
+        self.set("tts.voice_cloning.saved_voices", saved_voices)
+
+    def remove_saved_cloned_voice(self, name: str) -> bool:
+        """
+        Remove a saved cloned voice by name.
+
+        Args:
+            name: Voice name
+
+        Returns:
+            True if removed, False if not found
+        """
+        saved_voices = self.get_saved_cloned_voices()
+        original_count = len(saved_voices)
+        saved_voices = [v for v in saved_voices if v.get("name") != name]
+        
+        if len(saved_voices) < original_count:
+            self.set("tts.voice_cloning.saved_voices", saved_voices)
+            return True
+        return False
 
     # LoRA Info methods
     def get_lora_infos(self) -> Dict[str, str]:

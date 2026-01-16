@@ -16,7 +16,17 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 from PySide6.QtCore import Signal, Qt, QTimer, QEvent, QSize
-from PySide6.QtGui import QFont, QPixmap, QMouseEvent, QContextMenuEvent, QColor, QDragEnterEvent, QDropEvent, QKeyEvent, QTextOption
+from PySide6.QtGui import (
+    QFont,
+    QPixmap,
+    QMouseEvent,
+    QContextMenuEvent,
+    QColor,
+    QDragEnterEvent,
+    QDropEvent,
+    QKeyEvent,
+    QTextOption,
+)
 from PySide6.QtWidgets import QGraphicsDropShadowEffect, QSizePolicy
 import re
 from lokai.core.ollama_client import OllamaClient
@@ -30,11 +40,21 @@ import platform
 
 class ChatInputField(QTextEdit):
     """Custom QTextEdit that handles Enter for send and Shift+Enter for new line."""
-    
+
     send_requested = Signal()  # Signal emitted when Enter is pressed (without Shift)
-    
+    mode_change_requested = Signal()  # Signal emitted when Shift+Tab is pressed
+
     def keyPressEvent(self, event: QKeyEvent):
         """Handle key press events."""
+        # If Shift+Tab is pressed, cycle mode
+        if (
+            event.key() == Qt.Key.Key_Backtab
+            and event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+        ):
+            self.mode_change_requested.emit()
+            event.accept()
+            return
+
         # If Enter is pressed without Shift, send message
         if event.key() == Qt.Key.Key_Return or event.key() == Qt.Key.Key_Enter:
             if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
@@ -51,22 +71,22 @@ class ChatInputField(QTextEdit):
 
 class ChatBubbleTextEdit(QTextEdit):
     """Custom QTextEdit for chat bubbles that prevents scrolling."""
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._update_height_callback = None
-    
+
     def set_update_height_callback(self, callback):
         """Set callback to update height when widget resizes."""
         self._update_height_callback = callback
-    
+
     def resizeEvent(self, event):
         """Handle resize events to update text height."""
         super().resizeEvent(event)
         # Update height when widget is resized (e.g., window resize)
         if self._update_height_callback:
             QTimer.singleShot(10, self._update_height_callback)
-    
+
     def wheelEvent(self, event):
         """Block wheel events to prevent scrolling."""
         # Ignore wheel events - don't scroll
@@ -74,12 +94,12 @@ class ChatBubbleTextEdit(QTextEdit):
         # Pass to parent to allow chat area scrolling
         if self.parent():
             self.parent().wheelEvent(event)
-    
+
     def scrollContentsBy(self, dx, dy):
         """Prevent programmatic scrolling."""
         # Don't scroll - keep text at top
         pass
-    
+
     def keyPressEvent(self, event: QKeyEvent):
         """Handle key press events - allow text selection but prevent scrolling keys."""
         # Block keys that would cause scrolling
@@ -94,10 +114,10 @@ class ChatBubbleTextEdit(QTextEdit):
             # Ignore scrolling keys - don't process them
             event.ignore()
             return
-        
+
         # Allow all other keys (text selection, copy, etc.)
         super().keyPressEvent(event)
-        
+
         # After any key press, ensure we're at the top
         QTimer.singleShot(0, lambda: self.verticalScrollBar().setValue(0))
 
@@ -116,6 +136,7 @@ class ChatBubble(QFrame):
         message: str = "",
         is_user: bool = True,
         image_path: str = None,
+        audio_path: str = None,
         parent=None,
     ):
         """
@@ -125,12 +146,14 @@ class ChatBubble(QFrame):
             message: Message text
             is_user: True if user message, False if AI message
             image_path: Optional path to image to display
+            audio_path: Optional path to audio file to display with waveform
             parent: Parent widget
         """
         super().__init__(parent)
         self.is_user = is_user
         self.current_text = message
         self.image_path = image_path
+        self.audio_path = audio_path
 
         self.init_ui()
 
@@ -139,6 +162,14 @@ class ChatBubble(QFrame):
         layout = QVBoxLayout()
         layout.setContentsMargins(12, 8, 12, 8)
         layout.setSpacing(8)
+
+        # Add audio player if provided
+        if self.audio_path:
+            from lokai.ui.audio_player_widget import AudioPlayerWidget
+            self.audio_player = AudioPlayerWidget(self.audio_path)
+            layout.addWidget(self.audio_player)
+        else:
+            self.audio_player = None
 
         # Add image if provided
         if self.image_path:
@@ -151,7 +182,9 @@ class ChatBubble(QFrame):
             # Install event filter for double-click and right-click detection
             self.image_label.installEventFilter(self)
             # Enable context menu for right-click
-            self.image_label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            self.image_label.setContextMenuPolicy(
+                Qt.ContextMenuPolicy.CustomContextMenu
+            )
             self.image_label.customContextMenuRequested.connect(
                 self._show_image_context_menu
             )
@@ -187,23 +220,33 @@ class ChatBubble(QFrame):
             self.label = ChatBubbleTextEdit()
             self.label.setReadOnly(True)
             self.label.setHtml(self._format_markdown(self.current_text))
-            self.label.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+            self.label.setWordWrapMode(
+                QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere
+            )
             self.label.setTextInteractionFlags(
                 Qt.TextInteractionFlag.TextSelectableByMouse
             )
             # Set alignment
             if self.is_user:
-                self.label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+                self.label.setAlignment(
+                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop
+                )
             else:
-                self.label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+                self.label.setAlignment(
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+                )
             # Remove borders and background for seamless look
             self.label.setFrameShape(QTextEdit.Shape.NoFrame)
             self.label.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            self.label.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self.label.setHorizontalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+            )
             # Prevent scrolling - keep text at top
             self.label.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             # Set size policy to allow auto-resizing
-            self.label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+            self.label.setSizePolicy(
+                QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum
+            )
             # Auto-resize to content - update height based on document
             self.label.document().contentsChanged.connect(self._update_text_height)
             # Set callback for resize events
@@ -278,70 +321,93 @@ class ChatBubble(QFrame):
         """Update QTextEdit height to match content exactly."""
         if not hasattr(self, "label") or not self.label:
             return
-        
+
         doc = self.label.document()
         # Set text width to match widget width for proper wrapping
         text_width = self.label.viewport().width()
         if text_width > 0:
             doc.setTextWidth(text_width)
-        
+
         # Get document height after wrapping
         doc_height = doc.size().height()
-        
+
         # If document height is 0 or very small, try again after a short delay
         if doc_height < 5:
             QTimer.singleShot(10, self._update_text_height)
             return
-        
+
         # Add padding for descenders (g, j, q, p, y) - extra bottom padding
         # Base padding + extra for descenders
         new_height = int(doc_height) + 16  # Increased from 10 to 16 for descenders
-        
+
         # Use setMinimumHeight and setMaximumHeight instead of setFixedHeight
         # This allows the widget to grow/shrink naturally
         self.label.setMinimumHeight(new_height)
         self.label.setMaximumHeight(new_height)
-        
+
         # Ensure text stays at top (no scrolling) after height update
         QTimer.singleShot(10, lambda: self.label.verticalScrollBar().setValue(0))
 
     def _format_markdown(self, text: str) -> str:
         """
         Convert markdown to HTML for display.
-        
+
         Args:
             text: Markdown text
-            
+
         Returns:
             HTML formatted text
         """
         if not text:
             return ""
-        
+
         # Escape HTML first
-        html = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-        
+        html = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
         # Bold: **text** -> <b>text</b> (do this first)
-        html = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', html)
-        
+        html = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", html)
+
         # Italic: *text* -> <i>text</i> (only single asterisks that aren't part of **)
         # Match single asterisks that aren't adjacent to other asterisks
-        html = re.sub(r'(?<!\*)\*([^*]+?)\*(?!\*)', r'<i>\1</i>', html)
-        
+        html = re.sub(r"(?<!\*)\*([^*]+?)\*(?!\*)", r"<i>\1</i>", html)
+
         # Code blocks: ```code``` -> <pre><code>code</code></pre>
-        html = re.sub(r'```([\s\S]*?)```', r'<pre style="background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px; overflow-x: auto;"><code>\1</code></pre>', html)
-        
+        html = re.sub(
+            r"```([\s\S]*?)```",
+            r'<pre style="background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px; overflow-x: auto;"><code>\1</code></pre>',
+            html,
+        )
+
         # Inline code: `code` -> <code>code</code>
-        html = re.sub(r'`([^`]+?)`', r'<code style="background: rgba(0,0,0,0.2); padding: 2px 4px; border-radius: 3px; font-family: monospace;">\1</code>', html)
-        
+        html = re.sub(
+            r"`([^`]+?)`",
+            r'<code style="background: rgba(0,0,0,0.2); padding: 2px 4px; border-radius: 3px; font-family: monospace;">\1</code>',
+            html,
+        )
+
         # Headers
-        html = re.sub(r'^### (.+)$', r'<h3 style="margin: 8px 0 4px 0; font-size: 1.1em;">\1</h3>', html, flags=re.MULTILINE)
-        html = re.sub(r'^## (.+)$', r'<h2 style="margin: 10px 0 6px 0; font-size: 1.2em;">\1</h2>', html, flags=re.MULTILINE)
-        html = re.sub(r'^# (.+)$', r'<h1 style="margin: 12px 0 8px 0; font-size: 1.3em;">\1</h1>', html, flags=re.MULTILINE)
-        
+        html = re.sub(
+            r"^### (.+)$",
+            r'<h3 style="margin: 8px 0 4px 0; font-size: 1.1em;">\1</h3>',
+            html,
+            flags=re.MULTILINE,
+        )
+        html = re.sub(
+            r"^## (.+)$",
+            r'<h2 style="margin: 10px 0 6px 0; font-size: 1.2em;">\1</h2>',
+            html,
+            flags=re.MULTILINE,
+        )
+        html = re.sub(
+            r"^# (.+)$",
+            r'<h1 style="margin: 12px 0 8px 0; font-size: 1.3em;">\1</h1>',
+            html,
+            flags=re.MULTILINE,
+        )
+
         # Line breaks
-        html = html.replace('\n', '<br>')
-        
+        html = html.replace("\n", "<br>")
+
         return html
 
     def add_text(self, text: str):
@@ -355,19 +421,29 @@ class ChatBubble(QFrame):
             self.label = ChatBubbleTextEdit()
             self.label.setReadOnly(True)
             self.label.setHtml(self._format_markdown(self.current_text))
-            self.label.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+            self.label.setWordWrapMode(
+                QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere
+            )
             self.label.setTextInteractionFlags(
                 Qt.TextInteractionFlag.TextSelectableByMouse
             )
             if self.is_user:
-                self.label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+                self.label.setAlignment(
+                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop
+                )
             else:
-                self.label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+                self.label.setAlignment(
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+                )
             self.label.setFrameShape(QTextEdit.Shape.NoFrame)
             self.label.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            self.label.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self.label.setHorizontalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+            )
             # Set size policy to allow auto-resizing
-            self.label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+            self.label.setSizePolicy(
+                QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum
+            )
             # Auto-resize to content - update height based on document
             self.label.document().contentsChanged.connect(self._update_text_height)
             # Set callback for resize events
@@ -412,7 +488,7 @@ class ChatBubble(QFrame):
         # For QTextEdit, check if text is selected using textCursor
         cursor = self.label.textCursor()
         has_selection = cursor.hasSelection()
-        
+
         copy_action = menu.addAction("Copy")
         copy_action.setEnabled(has_selection)
         copy_action.triggered.connect(self._copy_text)
@@ -465,6 +541,7 @@ class ChatBubble(QFrame):
             if cursor.hasSelection():
                 selected_text = cursor.selectedText()
                 from PySide6.QtWidgets import QApplication
+
                 clipboard = QApplication.clipboard()
                 clipboard.setText(selected_text)
 
@@ -475,6 +552,7 @@ class ChatBubble(QFrame):
             text = self.label.toPlainText()
             if text:
                 from PySide6.QtWidgets import QApplication
+
                 clipboard = QApplication.clipboard()
                 clipboard.setText(text)
                 # Show feedback
@@ -525,6 +603,15 @@ class ChatBubble(QFrame):
                 subprocess.run(["xdg-open", self.image_path], check=False)
         except Exception as e:
             print(f"Error opening image: {e}")
+    
+    def __del__(self):
+        """Cleanup resources when bubble is destroyed."""
+        # Clean up audio player if it exists
+        if hasattr(self, 'audio_player') and self.audio_player is not None:
+            try:
+                self.audio_player.cleanup()
+            except Exception as e:
+                print(f"Error cleaning up audio player: {e}")
 
 
 class TypingIndicator(QFrame):
@@ -595,14 +682,22 @@ class ChatWidget(QWidget):
     image_prompt_sent = Signal(str)  # Signal for image generation
     audio_prompt_sent = Signal(str)  # Signal for audio generation
     seed_lock_toggled = Signal(bool)  # Signal for seed lock toggle
+    seed_increase_requested = Signal()  # Signal to increase seed
+    seed_decrease_requested = Signal()  # Signal to decrease seed
     text_selected_for_tts = Signal(str)  # Signal when text is selected for TTS
     text_selected_for_image = Signal(
         str
     )  # Signal when text is selected for image generation
-    text_selected_for_audio = Signal(str)  # Signal when text is selected for audio generation
-    image_selected_for_video = Signal(str)  # Signal when image is selected for video generation
+    text_selected_for_audio = Signal(
+        str
+    )  # Signal when text is selected for audio generation
+    image_selected_for_video = Signal(
+        str
+    )  # Signal when image is selected for video generation
 
-    def __init__(self, ollama_client: OllamaClient, config_manager: ConfigManager = None):
+    def __init__(
+        self, ollama_client: OllamaClient, config_manager: ConfigManager = None
+    ):
         """
         Initialize ChatWidget.
 
@@ -618,7 +713,7 @@ class ChatWidget(QWidget):
         self.audio_mode = False  # Toggle for audio generation mode
         self.seed_locked = False  # Seed lock state
         self.typing_indicator = None  # Typing indicator widget
-        
+
         # Image handling
         self.image_processor = ImageProcessor()
         self.last_uploaded_image = None  # Path to last uploaded image
@@ -665,7 +760,9 @@ class ChatWidget(QWidget):
         # Mode toggle button (chat -> image -> audio -> chat)
         self.image_mode_btn = QPushButton()
         self.image_mode_btn.setCheckable(False)  # Not checkable, uses clicked instead
-        self.image_mode_btn.setToolTip("Chat mode - Click to switch to image generation")
+        self.image_mode_btn.setToolTip(
+            "Chat mode - Click to switch to image generation"
+        )
         self.image_mode_btn.setMaximumWidth(40)
         self.image_mode_btn.setMaximumHeight(40)
         MaterialIcons.apply_to_button(
@@ -686,7 +783,20 @@ class ChatWidget(QWidget):
         self.input_field.setAcceptDrops(True)
         # Connect Enter key to send message
         self.input_field.send_requested.connect(self.send_message)
+        # Connect Shift+Tab to cycle mode
+        self.input_field.mode_change_requested.connect(self.cycle_mode)
         input_layout.addWidget(self.input_field, stretch=1)
+
+        # Voice input button (STT) - placed before prompt button
+        self.voice_btn = QPushButton()
+        self.voice_btn.setToolTip("Voice input (Speech-to-Text)")
+        self.voice_btn.setMaximumWidth(32)
+        self.voice_btn.setMaximumHeight(32)
+        MaterialIcons.apply_to_button(
+            self.voice_btn, MaterialIcons.MIC_SVG, size=16, keep_text=False
+        )
+        self.voice_btn.clicked.connect(self.toggle_voice_input)
+        input_layout.addWidget(self.voice_btn)
 
         # Prompt template button
         self.prompt_btn = QPushButton()
@@ -699,7 +809,37 @@ class ChatWidget(QWidget):
         self.prompt_btn.clicked.connect(self.show_prompt_menu)
         input_layout.addWidget(self.prompt_btn)
 
-        # Seed lock button (only visible in image mode)
+        # Seed controls container (vertical: plus, lock, minus)
+        seed_widget = QWidget()
+        seed_widget.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        seed_widget.setAutoFillBackground(False)
+        seed_layout = QVBoxLayout()
+        seed_layout.setContentsMargins(0, 0, 0, 0)
+        seed_layout.setSpacing(2)
+
+        # Plus button - transparent QLabel
+        self.seed_plus_btn = QLabel()
+        self.seed_plus_btn.setAttribute(
+            Qt.WidgetAttribute.WA_TranslucentBackground, True
+        )
+        self.seed_plus_btn.setAutoFillBackground(False)
+        plus_pixmap = MaterialIcons.svg_to_icon(
+            MaterialIcons.ADD_SVG, size=12, color="white"
+        ).pixmap(12, 12)
+        self.seed_plus_btn.setPixmap(plus_pixmap)
+        self.seed_plus_btn.setFixedSize(16, 16)
+        self.seed_plus_btn.setToolTip("Increase seed")
+        self.seed_plus_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.seed_plus_btn.hide()
+        self.seed_plus_btn.setStyleSheet("background: transparent; border: none;")
+        self.seed_plus_btn.mousePressEvent = (
+            lambda e: self.seed_increase_requested.emit()
+        )
+        seed_layout.addWidget(
+            self.seed_plus_btn, alignment=Qt.AlignmentFlag.AlignHCenter
+        )
+
+        # Seed lock button
         self.seed_lock_btn = QPushButton()
         self.seed_lock_btn.setCheckable(True)
         self.seed_lock_btn.setToolTip(
@@ -712,7 +852,34 @@ class ChatWidget(QWidget):
             self.seed_lock_btn, MaterialIcons.LOCK_OPEN_SVG, size=18, keep_text=False
         )
         self.seed_lock_btn.toggled.connect(self.on_seed_lock_toggled)
-        input_layout.addWidget(self.seed_lock_btn)
+        seed_layout.addWidget(
+            self.seed_lock_btn, alignment=Qt.AlignmentFlag.AlignHCenter
+        )
+
+        # Minus button - transparent QLabel
+        self.seed_minus_btn = QLabel()
+        self.seed_minus_btn.setAttribute(
+            Qt.WidgetAttribute.WA_TranslucentBackground, True
+        )
+        self.seed_minus_btn.setAutoFillBackground(False)
+        minus_pixmap = MaterialIcons.svg_to_icon(
+            MaterialIcons.REMOVE_SVG, size=12, color="white"
+        ).pixmap(12, 12)
+        self.seed_minus_btn.setPixmap(minus_pixmap)
+        self.seed_minus_btn.setFixedSize(16, 16)
+        self.seed_minus_btn.setToolTip("Decrease seed")
+        self.seed_minus_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.seed_minus_btn.hide()
+        self.seed_minus_btn.setStyleSheet("background: transparent; border: none;")
+        self.seed_minus_btn.mousePressEvent = (
+            lambda e: self.seed_decrease_requested.emit()
+        )
+        seed_layout.addWidget(
+            self.seed_minus_btn, alignment=Qt.AlignmentFlag.AlignHCenter
+        )
+
+        seed_widget.setLayout(seed_layout)
+        input_layout.addWidget(seed_widget)
 
         self.send_btn = QPushButton("Send")
         self.send_btn.setMinimumWidth(0)  # Allow shrinking
@@ -728,7 +895,11 @@ class ChatWidget(QWidget):
 
         self.input_frame.setLayout(input_layout)
         layout.addWidget(self.input_frame)
-        
+
+        # Voice input widget (initially hidden)
+        self.voice_input_widget = None
+        self._init_voice_input()
+
         # Set initial style for chat mode
         self._update_input_area_style()
 
@@ -879,6 +1050,8 @@ class ChatWidget(QWidget):
                 "Describe the image you want to generate..."
             )
             self.seed_lock_btn.setVisible(True)
+            self.seed_plus_btn.setVisible(self.seed_locked)
+            self.seed_minus_btn.setVisible(self.seed_locked)
         elif self.image_mode and not self.audio_mode:
             # Currently in image mode, switch to audio mode
             self.image_mode = False
@@ -893,6 +1066,8 @@ class ChatWidget(QWidget):
                 "Describe the audio you want to generate..."
             )
             self.seed_lock_btn.setVisible(True)
+            self.seed_plus_btn.setVisible(self.seed_locked)
+            self.seed_minus_btn.setVisible(self.seed_locked)
         else:  # audio_mode is True
             # Currently in audio mode, switch to chat mode
             self.image_mode = False
@@ -905,26 +1080,31 @@ class ChatWidget(QWidget):
             )
             self.input_field.setPlaceholderText("Type your message...")
             self.seed_lock_btn.setVisible(False)
-        
+            self.seed_plus_btn.hide()
+            self.seed_minus_btn.hide()
+
         # Update visual style based on mode
         self._update_input_area_style()
-        
+
         # Update seed lock button style if visible
         if self.seed_lock_btn.isVisible():
             self.update_seed_lock_button()
-    
+
     def _update_input_area_style(self):
         """Update input area style based on current mode."""
         if self.audio_mode:
             # Audio mode - red theme
-            self.input_frame.setStyleSheet("""
+            self.input_frame.setStyleSheet(
+                """
                 QFrame {
                     background: #3D1B1B;
                     border: 2px solid #E74C3C;
                     border-radius: 10px;
                 }
-            """)
-            self.input_field.setStyleSheet("""
+            """
+            )
+            self.input_field.setStyleSheet(
+                """
                 QTextEdit {
                     background: #4D2B2B;
                     color: #E0E0E0;
@@ -937,9 +1117,11 @@ class ChatWidget(QWidget):
                     border: 2px solid #E74C3C;
                     background: #5D3B3B;
                 }
-            """)
+            """
+            )
             # Update mode button to show audio mode is active
-            self.image_mode_btn.setStyleSheet("""
+            self.image_mode_btn.setStyleSheet(
+                """
                 QPushButton {
                     background-color: #E74C3C;
                     border: 2px solid #C0392B;
@@ -951,9 +1133,11 @@ class ChatWidget(QWidget):
                 QPushButton:pressed {
                     background-color: #A93226;
                 }
-            """)
+            """
+            )
             # Update Send button to red theme
-            self.send_btn.setStyleSheet("""
+            self.send_btn.setStyleSheet(
+                """
                 QPushButton {
                     background-color: #E74C3C;
                     color: white;
@@ -969,9 +1153,11 @@ class ChatWidget(QWidget):
                 QPushButton:pressed {
                     background-color: #A93226;
                 }
-            """)
+            """
+            )
             # Update prompt button to red theme
-            self.prompt_btn.setStyleSheet("""
+            self.prompt_btn.setStyleSheet(
+                """
                 QPushButton {
                     background-color: #E74C3C;
                     border: none;
@@ -983,20 +1169,40 @@ class ChatWidget(QWidget):
                 QPushButton:pressed {
                     background-color: #A93226;
                 }
-            """)
+            """
+            )
+            # Update voice button to red theme
+            self.voice_btn.setStyleSheet(
+                """
+                QPushButton {
+                    background-color: #E74C3C;
+                    border: none;
+                    border-radius: 10px;
+                }
+                QPushButton:hover {
+                    background-color: #C0392B;
+                }
+                QPushButton:pressed {
+                    background-color: #A93226;
+                }
+            """
+            )
             # Update seed lock button - use update_seed_lock_button to handle locked/unlocked states
             if self.seed_lock_btn.isVisible():
                 self.update_seed_lock_button()
         elif self.image_mode:
             # Image mode - purple/violet theme
-            self.input_frame.setStyleSheet("""
+            self.input_frame.setStyleSheet(
+                """
                 QFrame {
                     background: #2D1B3D;
                     border: 2px solid #9B59B6;
                     border-radius: 10px;
                 }
-            """)
-            self.input_field.setStyleSheet("""
+            """
+            )
+            self.input_field.setStyleSheet(
+                """
                 QTextEdit {
                     background: #3D2B4D;
                     color: #E0E0E0;
@@ -1009,9 +1215,11 @@ class ChatWidget(QWidget):
                     border: 2px solid #9B59B6;
                     background: #4D3B5D;
                 }
-            """)
+            """
+            )
             # Update mode button to show image mode is active
-            self.image_mode_btn.setStyleSheet("""
+            self.image_mode_btn.setStyleSheet(
+                """
                 QPushButton {
                     background-color: #9B59B6;
                     border: 2px solid #8E44AD;
@@ -1023,9 +1231,11 @@ class ChatWidget(QWidget):
                 QPushButton:pressed {
                     background-color: #7D3C98;
                 }
-            """)
+            """
+            )
             # Update Send button to purple theme
-            self.send_btn.setStyleSheet("""
+            self.send_btn.setStyleSheet(
+                """
                 QPushButton {
                     background-color: #9B59B6;
                     color: white;
@@ -1041,9 +1251,11 @@ class ChatWidget(QWidget):
                 QPushButton:pressed {
                     background-color: #7D3C98;
                 }
-            """)
+            """
+            )
             # Update prompt button to purple theme
-            self.prompt_btn.setStyleSheet("""
+            self.prompt_btn.setStyleSheet(
+                """
                 QPushButton {
                     background-color: #9B59B6;
                     border: none;
@@ -1055,21 +1267,41 @@ class ChatWidget(QWidget):
                 QPushButton:pressed {
                     background-color: #7D3C98;
                 }
-            """)
+            """
+            )
+            # Update voice button to purple theme
+            self.voice_btn.setStyleSheet(
+                """
+                QPushButton {
+                    background-color: #9B59B6;
+                    border: none;
+                    border-radius: 10px;
+                }
+                QPushButton:hover {
+                    background-color: #8E44AD;
+                }
+                QPushButton:pressed {
+                    background-color: #7D3C98;
+                }
+            """
+            )
             # Update seed lock button - use update_seed_lock_button to handle locked/unlocked states
             # This will set purple for unlocked, red for locked
             if self.seed_lock_btn.isVisible():
                 self.update_seed_lock_button()
         else:
             # Chat mode - default blue theme (explicitly reset to match theme)
-            self.input_frame.setStyleSheet("""
+            self.input_frame.setStyleSheet(
+                """
                 QFrame {
                     background: transparent;
                     border: none;
                 }
-            """)
+            """
+            )
             # Reset input field to default theme style
-            self.input_field.setStyleSheet("""
+            self.input_field.setStyleSheet(
+                """
                 QTextEdit {
                     background: #2D2D2D;
                     color: #E0E0E0;
@@ -1081,9 +1313,11 @@ class ChatWidget(QWidget):
                 QTextEdit:focus {
                     border: 2px solid #4A9EFF;
                 }
-            """)
+            """
+            )
             # Reset mode button to default theme style (chat mode)
-            self.image_mode_btn.setStyleSheet("""
+            self.image_mode_btn.setStyleSheet(
+                """
                 QPushButton {
                     background: #4A9EFF;
                     color: white;
@@ -1096,9 +1330,11 @@ class ChatWidget(QWidget):
                 QPushButton:pressed {
                     background: #FF6B6B;
                 }
-            """)
+            """
+            )
             # Reset Send button to default theme style
-            self.send_btn.setStyleSheet("""
+            self.send_btn.setStyleSheet(
+                """
                 QPushButton {
                     background: #4A9EFF;
                     color: white;
@@ -1114,9 +1350,11 @@ class ChatWidget(QWidget):
                 QPushButton:pressed {
                     background: #FF6B6B;
                 }
-            """)
+            """
+            )
             # Reset prompt button to default blue theme style
-            self.prompt_btn.setStyleSheet("""
+            self.prompt_btn.setStyleSheet(
+                """
                 QPushButton {
                     background-color: #4A9EFF;
                     border: none;
@@ -1128,7 +1366,24 @@ class ChatWidget(QWidget):
                 QPushButton:pressed {
                     background-color: #FF6B6B;
                 }
-            """)
+            """
+            )
+            # Reset voice button to default blue theme style  
+            self.voice_btn.setStyleSheet(
+                """
+                QPushButton {
+                    background-color: #4A9EFF;
+                    border: none;
+                    border-radius: 10px;
+                }
+                QPushButton:hover {
+                    background-color: #3A3A3A;
+                }
+                QPushButton:pressed {
+                    background-color: #FF6B6B;
+                }
+            """
+            )
             # Reset seed lock button (will be updated by update_seed_lock_button if visible)
             # But since it's hidden in chat mode, we don't need to reset it
 
@@ -1136,6 +1391,13 @@ class ChatWidget(QWidget):
         """Handle seed lock toggle."""
         self.seed_locked = checked
         self.update_seed_lock_button()
+        # Show/hide plus/minus when lock is toggled
+        if checked and (self.image_mode or self.audio_mode):
+            self.seed_plus_btn.show()
+            self.seed_minus_btn.show()
+        else:
+            self.seed_plus_btn.hide()
+            self.seed_minus_btn.hide()
         self.seed_lock_toggled.emit(checked)
 
     def update_seed_lock_button(self):
@@ -1239,12 +1501,12 @@ class ChatWidget(QWidget):
     def show_prompt_menu(self):
         """Show prompt selection menu."""
         from PySide6.QtWidgets import QMenu
-        
+
         if not self.config_manager:
             return
-        
+
         menu = QMenu(self)
-        
+
         prompts = self.config_manager.get_prompts()
         if not prompts:
             action = menu.addAction("No prompts available")
@@ -1254,9 +1516,11 @@ class ChatWidget(QWidget):
                 action = menu.addAction(prompt.get("name", "Unnamed"))
                 action.setData(prompt.get("text", ""))
                 action.triggered.connect(
-                    lambda checked, text=prompt.get("text", ""): self.insert_prompt(text)
+                    lambda checked, text=prompt.get("text", ""): self.insert_prompt(
+                        text
+                    )
                 )
-        
+
         # Show menu below button
         button_pos = self.prompt_btn.mapToGlobal(self.prompt_btn.rect().bottomLeft())
         menu.exec(button_pos)
@@ -1265,7 +1529,7 @@ class ChatWidget(QWidget):
         """Insert prompt text into input field."""
         if not text:
             return
-        
+
         current_text = self.input_field.toPlainText()
         if current_text.strip():
             # If there's existing text, add prompt on new line
@@ -1286,7 +1550,7 @@ class ChatWidget(QWidget):
 
         # Clear input
         self.input_field.clear()
-        
+
         # Clear uploaded image after sending
         self.last_uploaded_image = None
 
@@ -1313,43 +1577,42 @@ class ChatWidget(QWidget):
         """Add video message to chat."""
         # Create bubble with video link
         bubble = ChatBubble(prompt or "Generated video", is_user=False)
-        
+
         # Add video link
-        video_label = QLabel(f'<a href="file:///{video_path.replace(chr(92), "/")}">Open Video: {os.path.basename(video_path)}</a>')
+        video_label = QLabel(
+            f'<a href="file:///{video_path.replace(chr(92), "/")}">Open Video: {os.path.basename(video_path)}</a>'
+        )
         video_label.setOpenExternalLinks(True)
-        video_label.setStyleSheet("color: #4A9EFF; text-decoration: underline; padding: 8px;")
-        
+        video_label.setStyleSheet(
+            "color: #4A9EFF; text-decoration: underline; padding: 8px;"
+        )
+
         layout = bubble.layout()
         if layout:
             layout.insertWidget(0, video_label)
-        
+
         # Connect bubble signals
         bubble.text_selected_for_tts.connect(self.text_selected_for_tts.emit)
         bubble.text_selected_for_image.connect(self.text_selected_for_image.emit)
         bubble.text_selected_for_audio.connect(self.text_selected_for_audio.emit)
-        
+
         self.messages_layout.insertWidget(self.messages_layout.count() - 1, bubble)
         self.scroll_to_bottom()
 
     def add_audio_message(self, audio_path: str, prompt: str = ""):
-        """Add audio message to chat."""
-        # Create bubble with audio link
-        bubble = ChatBubble(prompt or "Generated audio", is_user=False)
-        
-        # Add audio link
-        audio_label = QLabel(f'<a href="file:///{audio_path.replace(chr(92), "/")}">Open Audio: {os.path.basename(audio_path)}</a>')
-        audio_label.setOpenExternalLinks(True)
-        audio_label.setStyleSheet("color: #E74C3C; text-decoration: underline; padding: 8px;")
-        
-        layout = bubble.layout()
-        if layout:
-            layout.insertWidget(0, audio_label)
-        
+        """Add audio message to chat with waveform player."""
+        # Create bubble with audio player
+        bubble = ChatBubble(
+            prompt or "Generated audio", 
+            is_user=False, 
+            audio_path=audio_path
+        )
+
         # Connect bubble signals
         bubble.text_selected_for_tts.connect(self.text_selected_for_tts.emit)
         bubble.text_selected_for_image.connect(self.text_selected_for_image.emit)
         bubble.text_selected_for_audio.connect(self.text_selected_for_audio.emit)
-        
+
         self.messages_layout.insertWidget(self.messages_layout.count() - 1, bubble)
         self.scroll_to_bottom()
 
@@ -1362,7 +1625,7 @@ class ChatWidget(QWidget):
 
         self.current_ai_bubble = None
         self.add_welcome_message()
-    
+
     def dragEnterEvent(self, event: QDragEnterEvent):
         """Handle drag enter event for image drop."""
         if event.mimeData().hasUrls():
@@ -1374,7 +1637,7 @@ class ChatWidget(QWidget):
                     event.acceptProposedAction()
                     return
         event.ignore()
-    
+
     def dropEvent(self, event: QDropEvent):
         """Handle drop event for image upload."""
         if event.mimeData().hasUrls():
@@ -1386,39 +1649,37 @@ class ChatWidget(QWidget):
                     event.acceptProposedAction()
                     return
         event.ignore()
-    
+
     def handle_image_upload(self, image_path: str):
         """Handle image upload from drag & drop."""
         if not os.path.exists(image_path):
             QMessageBox.warning(
-                self,
-                "File Not Found",
-                f"Image file not found: {image_path}"
+                self, "File Not Found", f"Image file not found: {image_path}"
             )
             return
-        
+
         # Get image info
         img_info = self.image_processor.get_image_info(image_path)
         if not img_info:
             QMessageBox.warning(
                 self,
                 "Invalid Image",
-                "Could not read image file. Please ensure it's a valid image."
+                "Could not read image file. Please ensure it's a valid image.",
             )
             return
-        
+
         # Check file size (max 50MB)
         if img_info["file_size_mb"] > 50:
             QMessageBox.warning(
                 self,
                 "File Too Large",
-                f"Image file is too large ({img_info['file_size_mb']}MB). Maximum size is 50MB."
+                f"Image file is too large ({img_info['file_size_mb']}MB). Maximum size is 50MB.",
             )
             return
-        
+
         # Store as last uploaded image
         self.last_uploaded_image = image_path
-        
+
         # Show image in chat immediately
         upload_msg = f"📁 Image uploaded: {os.path.basename(image_path)} ({img_info['width']}x{img_info['height']}, {img_info['file_size_mb']}MB)"
         bubble = ChatBubble(upload_msg, is_user=True, image_path=image_path)
@@ -1427,5 +1688,86 @@ class ChatWidget(QWidget):
         bubble.text_selected_for_audio.connect(self.text_selected_for_audio.emit)
         self.messages_layout.insertWidget(self.messages_layout.count() - 1, bubble)
         self.scroll_to_bottom()
-        
-        print(f"Image uploaded: {image_path} ({img_info['width']}x{img_info['height']})")
+
+        print(
+            f"Image uploaded: {image_path} ({img_info['width']}x{img_info['height']})"
+        )
+
+    def _init_voice_input(self):
+        """Initialize voice input widget."""
+        try:
+            from lokai.ui.voice_input_widget import VoiceInputWidget
+            from lokai.core.config_manager import ConfigManager
+
+            config_manager = ConfigManager()
+            self.voice_input_widget = VoiceInputWidget(config_manager)
+
+            # Connect signals
+            self.voice_input_widget.transcription_ready.connect(self._on_voice_transcription)
+            self.voice_input_widget.error_occurred.connect(self._on_voice_error)
+            self.voice_input_widget.voice_input_started.connect(self._on_voice_started)
+            self.voice_input_widget.voice_input_stopped.connect(self._on_voice_stopped)
+
+            # Initially hide voice input widget
+            self.voice_input_widget.hide()
+
+        except Exception as e:
+            print(f"Error initializing voice input: {e}")
+            self.voice_input_widget = None
+
+    def toggle_voice_input(self):
+        """Toggle voice input (directly start/stop ASR without showing widget)."""
+        if self.voice_input_widget is None:
+            return
+
+        # Check if currently listening
+        if hasattr(self.voice_input_widget, 'is_listening') and self.voice_input_widget.is_listening:
+            # Stop listening
+            self.voice_input_widget.stop_voice_input()
+            # Reset voice button icon
+            MaterialIcons.apply_to_button(
+                self.voice_btn, MaterialIcons.MIC_SVG, size=16, keep_text=False
+            )
+        else:
+            # Start listening directly (no widget shown)
+            self.voice_input_widget.start_voice_input()
+            # Update voice button icon to indicate active
+            MaterialIcons.apply_to_button(
+                self.voice_btn, MaterialIcons.MIC_OFF_SVG, size=16, keep_text=False
+                )
+
+    def _on_voice_transcription(self, text: str):
+        """Handle voice transcription ready."""
+        if text.strip():
+            # Insert transcription into input field
+            self.input_field.setPlainText(text.strip())
+            
+            # Focus input field so user can review/edit before sending
+            self.input_field.setFocus()
+            
+            # Auto-send disabled - user must press Enter or Send button to confirm
+            # This allows reviewing/editing the transcription before sending
+            auto_send = False
+            if auto_send:
+                self.send_message()
+
+    def _on_voice_error(self, error: str):
+        """Handle voice input error."""
+        print(f"Voice input error: {error}")
+        # Could show error message to user
+
+    def _on_voice_started(self):
+        """Handle voice input started."""
+        print("Voice input started")
+        # Update mic button to indicate active listening
+        MaterialIcons.apply_to_button(
+            self.voice_btn, MaterialIcons.MIC_OFF_SVG, size=16, keep_text=False
+        )
+
+    def _on_voice_stopped(self):
+        """Handle voice input stopped."""
+        print("Voice input stopped")
+        # Reset mic button to normal state
+        MaterialIcons.apply_to_button(
+            self.voice_btn, MaterialIcons.MIC_SVG, size=16, keep_text=False
+        )

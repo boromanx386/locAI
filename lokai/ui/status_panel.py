@@ -300,7 +300,8 @@ class StatusPanel(QFrame):
 
     def _refresh_models_async(self):
         """Actually refresh models."""
-        models, error = self.detector.get_installed_models()
+        # Get LLM and Vision models (exclude embedding models)
+        models, error = self.detector.get_llm_and_vision_models()
 
         if error:
             self.set_offline(error)
@@ -326,6 +327,7 @@ class StatusPanel(QFrame):
 
     def update_models(self, models: list):
         """Update model list (called externally)."""
+        # If models list is provided, assume it's already filtered (LLM + Vision)
         if not models:
             self.model_combo.clear()
             self.model_combo.addItem("No models installed")
@@ -377,13 +379,58 @@ class StatusPanel(QFrame):
         self.tts_pause_btn.setEnabled(False)
         self.tts_stop_btn.setEnabled(False)
 
-    def update_voices_for_language(self, lang_code: str):
-        """Update voice combo box with voices for selected language."""
-        from lokai.core.tts_engine import TTSEngine
-
-        # Create temporary engine to get voices
-        temp_engine = TTSEngine(lang_code=lang_code)
-        voices = temp_engine.get_voices_for_language(lang_code)
+    def update_voices_for_language(self, lang_code: str = None, engine: str = "kokoro", voice_cloning_enabled: bool = False, config_manager=None):
+        """Update voice combo box with voices for selected language and engine."""
+        if engine == "pocket_tts":
+            # Pocket TTS voices (English only)
+            voices = ['alba', 'marius', 'javert', 'jean', 'fantine', 'cosette', 'eponine', 'azelma']
+            
+            # Add saved cloned voices if config_manager is provided
+            if config_manager:
+                saved_voices = config_manager.get_saved_cloned_voices()
+                for saved_voice in saved_voices:
+                    voice_name = saved_voice.get("name", "Unknown")
+                    voices.append(voice_name)
+            
+            # Add "Clone Voice" option if voice cloning is enabled
+            if voice_cloning_enabled:
+                voices.append('Clone Voice')
+        else:
+            # Kokoro voices - use static list to avoid loading the model
+            voices_by_language = {
+                "a": [  # American English
+                    "af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica",
+                    "af_kore", "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky",
+                    "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam",
+                    "am_michael", "am_onyx", "am_puck", "am_santa",
+                ],
+                "b": [  # British English
+                    "bf_alice", "bf_emma", "bf_isabella", "bf_lily",
+                    "bm_daniel", "bm_fable", "bm_george", "bm_lewis",
+                ],
+                "e": [  # Spanish
+                    "ef_dora", "em_alex", "em_santa",
+                ],
+                "f": [  # French
+                    "ff_siwis",
+                ],
+                "h": [  # Hindi
+                    "hf_alpha", "hf_beta", "hm_omega", "hm_psi",
+                ],
+                "i": [  # Italian
+                    "if_sara", "im_nicola",
+                ],
+                "j": [  # Japanese
+                    "jf_alpha", "jf_gongitsune", "jf_nezumi", "jf_tebukuro", "jm_kumo",
+                ],
+                "p": [  # Brazilian Portuguese
+                    "pf_dora", "pm_alex", "pm_santa",
+                ],
+                "z": [  # Mandarin Chinese
+                    "zf_xiaobei", "zf_xiaoni", "zf_xiaoxiao", "zf_xiaoyi",
+                ],
+            }
+            voices = voices_by_language.get(lang_code or "a", voices_by_language["a"])
 
         # Save current selection if it exists in new list
         current_voice = self.tts_voice_combo.currentText()

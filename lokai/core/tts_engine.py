@@ -18,6 +18,14 @@ except ImportError:
     KOKORO_AVAILABLE = False
     print("Warning: kokoro not available. Install with: pip install kokoro soundfile")
 
+# Try to import Pocket TTS, fallback to None if not available
+try:
+    from pocket_tts import TTSModel
+    POCKET_TTS_AVAILABLE = True
+except ImportError:
+    POCKET_TTS_AVAILABLE = False
+    print("Warning: pocket-tts not available. Install with: pip install pocket-tts scipy")
+
 
 class TTSEngine:
     """Text-to-Speech engine using Kokoro-82M."""
@@ -410,3 +418,26 @@ class TTSEngine:
             # Silently ignore errors
             pass
 
+
+def create_tts_engine(engine_type: str, **kwargs):
+    """
+    Factory funkcija za kreiranje TTS engine-a.
+    
+    Args:
+        engine_type: "kokoro" ili "pocket_tts"
+        **kwargs: parametri za odabrani engine
+        
+    Returns:
+        TTSEngine ili PocketTTSEngine instance
+    """
+    if engine_type == "kokoro":
+        if not KOKORO_AVAILABLE:
+            raise RuntimeError("Kokoro TTS nije dostupan")
+        return TTSEngine(**kwargs)
+    elif engine_type == "pocket_tts":
+        if not POCKET_TTS_AVAILABLE:
+            raise RuntimeError("Pocket TTS nije dostupan")
+        from lokai.core.pocket_tts_engine import PocketTTSEngine
+        return PocketTTSEngine(**kwargs)
+    else:
+        raise ValueError(f"Unknown TTS engine: {engine_type}")

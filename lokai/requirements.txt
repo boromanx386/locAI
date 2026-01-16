@@ -10,4 +10,11 @@ transformers>=4.56.0
 peft>=0.7.0
 keyboard>=0.13.5
 numpy>=1.24.0
+pocket-tts>=1.0.0
+scipy>=1.16.0
 
+# NeMo ASR dependencies
+Cython>=0.29.0
+nemo_toolkit[asr] @ git+https://github.com/NVIDIA/NeMo.git@main
+sounddevice>=0.4.0
+webrtcvad>=2.0.10
