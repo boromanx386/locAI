@@ -43,6 +43,7 @@ desktop.ini
 *.rar
 *.zip
 temp_recording.wav
+*.wav
 conversation_*.txt
 conversations/
 archive/
@@ -50,6 +51,12 @@ archive/
 *.jpg
 *.jpeg
 *.gif
+
+# Chat and test files
+chat_*.json
+test_*.py
+check_*.py
+download_*.py
 
 # Config files (user-specific)
 lokai/config/user_config.json
