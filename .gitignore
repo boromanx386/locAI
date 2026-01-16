@@ -60,6 +60,7 @@ download_*.py
 
 # Config files (user-specific)
 lokai/config/user_config.json
+lokai/sound.json
 *.json.bak
 
 # Cache and temporary files
