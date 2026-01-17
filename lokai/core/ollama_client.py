@@ -65,6 +65,7 @@ class OllamaClient:
         repeat_penalty: Optional[float] = None,
         num_predict: Optional[int] = None,
         seed: Optional[int] = None,
+        tools: Optional[List[dict]] = None,
     ) -> Tuple[str, Optional[List[int]]]:
         """
         Generate response from model with streaming support.
@@ -82,6 +83,7 @@ class OllamaClient:
             repeat_penalty: Repeat penalty (optional)
             num_predict: Maximum tokens to generate, -1 for unlimited (optional)
             seed: Seed for reproducibility, -1 for random (optional)
+            tools: Optional list of tools for function calling (optional)
 
         Returns:
             Tuple of (full_response, new_context)
@@ -97,21 +99,32 @@ class OllamaClient:
             if context is not None and context:
                 payload["context"] = context
 
-            # Add LLM parameters if provided
+            # Build options object - this overrides server/model settings
+            # Using options object ensures parameters are applied regardless of Ollama server config
+            options = {}
             if num_ctx is not None:
-                payload["num_ctx"] = num_ctx
+                options["num_ctx"] = num_ctx
             if temperature is not None:
-                payload["temperature"] = temperature
+                options["temperature"] = temperature
             if top_p is not None:
-                payload["top_p"] = top_p
+                options["top_p"] = top_p
             if top_k is not None:
-                payload["top_k"] = top_k
+                options["top_k"] = top_k
             if repeat_penalty is not None:
-                payload["repeat_penalty"] = repeat_penalty
+                options["repeat_penalty"] = repeat_penalty
             if num_predict is not None:
-                payload["num_predict"] = num_predict
+                options["num_predict"] = num_predict
             if seed is not None and seed != -1:
-                payload["seed"] = seed
+                options["seed"] = seed
+
+            # Only add options if we have at least one parameter
+            # This ensures we override server settings when parameters are provided
+            if options:
+                payload["options"] = options
+
+            # Add tools for function calling (if supported by model)
+            if tools is not None and len(tools) > 0:
+                payload["tools"] = tools
 
             # Add images if provided (for vision models like LLaVA)
             if images and len(images) > 0:
@@ -225,6 +238,7 @@ class OllamaClient:
         repeat_penalty: Optional[float] = None,
         num_predict: Optional[int] = None,
         seed: Optional[int] = None,
+        tools: Optional[List[dict]] = None,
     ) -> Tuple[str, Optional[List[int]]]:
         """
         Generate response without streaming (collects all chunks first).
@@ -241,6 +255,7 @@ class OllamaClient:
             repeat_penalty: Repeat penalty (optional)
             num_predict: Maximum tokens to generate, -1 for unlimited (optional)
             seed: Seed for reproducibility, -1 for random (optional)
+            tools: Optional list of tools for function calling (optional)
 
         Returns:
             Tuple of (full_response, new_context)
@@ -264,9 +279,89 @@ class OllamaClient:
             repeat_penalty=repeat_penalty,
             num_predict=num_predict,
             seed=seed,
+            tools=tools,
         )
 
         return response, new_context
+
+    def chat_with_tools(
+        self,
+        model: str,
+        messages: List[dict],
+        tools: Optional[List[dict]] = None,
+        num_ctx: Optional[int] = None,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
+        repeat_penalty: Optional[float] = None,
+        num_predict: Optional[int] = None,
+        seed: Optional[int] = None,
+    ) -> dict:
+        """
+        Chat API endpoint koji bolje podržava tools/function calling.
+        
+        Args:
+            model: Model name to use
+            messages: List of messages in format [{"role": "user", "content": "..."}]
+            tools: Optional list of tools for function calling
+            num_ctx: Context window size (optional)
+            temperature: Temperature for sampling (optional)
+            top_p: Top-p sampling parameter (optional)
+            top_k: Top-k sampling parameter (optional)
+            repeat_penalty: Repeat penalty (optional)
+            num_predict: Maximum tokens to generate (optional)
+            seed: Seed for reproducibility (optional)
+            
+        Returns:
+            Dict with response message and tool_calls if any
+        """
+        try:
+            payload = {
+                "model": model,
+                "messages": messages,
+                "stream": False,
+            }
+            
+            # Build options object
+            options = {}
+            if num_ctx is not None:
+                options["num_ctx"] = num_ctx
+            if temperature is not None:
+                options["temperature"] = temperature
+            if top_p is not None:
+                options["top_p"] = top_p
+            if top_k is not None:
+                options["top_k"] = top_k
+            if repeat_penalty is not None:
+                options["repeat_penalty"] = repeat_penalty
+            if num_predict is not None:
+                options["num_predict"] = num_predict
+            if seed is not None and seed != -1:
+                options["seed"] = seed
+                
+            if options:
+                payload["options"] = options
+                
+            # Add tools
+            if tools is not None and len(tools) > 0:
+                payload["tools"] = tools
+            
+            response = self.session.post(
+                f"{self.base_url}/api/chat",
+                json=payload,
+                timeout=self.timeout,
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return data
+            else:
+                error_data = response.json() if response.headers.get('content-type', '').startswith('application/json') else {}
+                error_msg = error_data.get("error", response.text)
+                return {"error": f"HTTP {response.status_code}: {error_msg}"}
+                
+        except Exception as e:
+            return {"error": f"Error: {str(e)}"}
 
     def unload_model(self, model_name: str) -> bool:
         """

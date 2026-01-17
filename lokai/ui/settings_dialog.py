@@ -169,6 +169,20 @@ class SettingsDialog(QDialog):
         ollama_group.setLayout(ollama_layout)
         layout.addWidget(ollama_group)
 
+        # Tools/Function Calling Group
+        tools_group = QGroupBox("Tools / Function Calling")
+        tools_layout = QFormLayout()
+
+        self.tools_enabled_check = QCheckBox("Enable tools (web search, weather, etc.)")
+        self.tools_enabled_check.setToolTip(
+            "Omogući modelu da koristi tools za pretragu interneta i druge funkcije. "
+            "Radi samo sa modelima koji podržavaju tools (qwen3, deepseek-r1, itd.)."
+        )
+        tools_layout.addRow("", self.tools_enabled_check)
+
+        tools_group.setLayout(tools_layout)
+        layout.addWidget(tools_group)
+
         # LLM Generation Parameters Group
         llm_params_group = QGroupBox("LLM Generation Parameters")
         llm_params_layout = QFormLayout()
@@ -2118,6 +2132,9 @@ class SettingsDialog(QDialog):
         auto_start = self.config_manager.get("ollama.auto_start", False)
         self.auto_start_check.setChecked(auto_start)
 
+        tools_enabled = self.config_manager.get("ollama.tools.enabled", False)
+        self.tools_enabled_check.setChecked(tools_enabled)
+
         # Get current model from parent (MainWindow) if available
         current_model = None
         if self.parent() and hasattr(self.parent(), "_current_model"):
@@ -2563,6 +2580,7 @@ class SettingsDialog(QDialog):
         self.config_manager.set("ollama.base_url", self.ollama_url_edit.text())
         self.config_manager.set("ollama.default_model", self.default_model_edit.text())
         self.config_manager.set("ollama.auto_start", self.auto_start_check.isChecked())
+        self.config_manager.set("ollama.tools.enabled", self.tools_enabled_check.isChecked())
 
         # Get current model from parent (MainWindow) if available
         current_model = None

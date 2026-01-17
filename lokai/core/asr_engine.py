@@ -35,11 +35,18 @@ class ASREngine:
         self.storage_path = storage_path
         self.model = None
         self.current_model = None
-        self.device = (
-            "cuda"
-            if torch.cuda.is_available()
-            else "cpu" if NEMO_AVAILABLE else None
-        )
+        
+        # Force CPU mode for ASR to avoid CUDA crashes
+        # CUDA crashes are happening in PyTorch C++ layer which Python can't catch
+        # CPU mode is slower but stable
+        self.device = "cpu" if NEMO_AVAILABLE else None
+        
+        # Uncomment below to allow GPU (at your own risk):
+        # self.device = (
+        #     "cuda"
+        #     if torch.cuda.is_available()
+        #     else "cpu" if NEMO_AVAILABLE else None
+        # )
 
         # Chunk size configurations mapping
         self.chunk_configs = {
@@ -101,13 +108,11 @@ class ASREngine:
             # Load model from Hugging Face
             self.model = nemo_asr.models.ASRModel.from_pretrained(model_name)
 
-            # Move to device
-            if self.device == "cuda":
-                self.model = self.model.to(self.device)
-                print("ASR model loaded on GPU")
-            else:
-                self.model = self.model.to(self.device)
-                print("ASR model loaded on CPU (will be slower)")
+            # Force CPU mode to avoid CUDA crashes
+            # CUDA crashes happen in C++ layer which Python can't catch
+            self.device = "cpu"
+            self.model = self.model.to(self.device)
+            print("ASR model loaded on CPU (forced to avoid CUDA crashes)")
 
             # Set chunk configuration
             if chunk_size_ms in self.chunk_configs:
@@ -149,6 +154,22 @@ class ASREngine:
                 print(f"Cannot load ASR model: {e}")
                 return None
 
+        # Check CUDA context validity if using GPU
+        if self.device == "cuda" and torch.cuda.is_available():
+            try:
+                # Verify CUDA context is still valid
+                torch.cuda.current_device()
+            except RuntimeError as e:
+                print(f"CUDA context lost: {e}")
+                print("Switching to CPU mode")
+                self.device = "cpu"
+                if self.model is not None:
+                    try:
+                        self.model = self.model.to('cpu')
+                    except Exception as e2:
+                        print(f"Failed to move model to CPU: {e2}")
+                        return None
+
         try:
             # Check if file exists
             if not os.path.exists(audio_path):
@@ -157,8 +178,27 @@ class ASREngine:
 
             print(f"Transcribing audio file: {audio_path}")
 
-            # Transcribe using NeMo
-            result = self.model.transcribe([audio_path])[0]
+            # Transcribe using NeMo - wrap in try-except for CUDA errors
+            try:
+                result = self.model.transcribe([audio_path])[0]
+            except RuntimeError as e:
+                error_str = str(e)
+                if "CUDA" in error_str or "cuda" in error_str.lower():
+                    print(f"CUDA error during transcription: {e}")
+                    print("Attempting to recover by switching to CPU...")
+                    # Try to recover by switching to CPU
+                    try:
+                        self.device = "cpu"
+                        self.model = self.model.to('cpu')
+                        # Retry transcription on CPU
+                        result = self.model.transcribe([audio_path])[0]
+                        print("Recovered - transcription completed on CPU")
+                    except Exception as e2:
+                        print(f"Recovery failed: {e2}")
+                        return None
+                else:
+                    # Re-raise non-CUDA RuntimeErrors
+                    raise
             
             # NeMo returns a Hypothesis object, extract text
             if hasattr(result, 'text'):
@@ -201,6 +241,22 @@ class ASREngine:
             except Exception as e:
                 print(f"Cannot load ASR model: {e}")
                 return None
+
+        # Check CUDA context validity if using GPU
+        if self.device == "cuda" and torch.cuda.is_available():
+            try:
+                # Verify CUDA context is still valid
+                torch.cuda.current_device()
+            except RuntimeError as e:
+                print(f"CUDA context lost: {e}")
+                print("Switching to CPU mode")
+                self.device = "cpu"
+                if self.model is not None:
+                    try:
+                        self.model = self.model.to('cpu')
+                    except Exception as e2:
+                        print(f"Failed to move model to CPU: {e2}")
+                        return None
 
         try:
             # Ensure audio is float32 and mono

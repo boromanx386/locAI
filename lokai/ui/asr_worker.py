@@ -222,21 +222,42 @@ class ASRWorker(QThread):
 
             print(f"Processing {buffer_duration:.1f}s of audio...")
 
-            # Transcribe audio
-            transcription = self.asr_engine.transcribe_audio_array(
-                audio_data, self.sample_rate
-            )
+            # Check if model is still available
+            if self.asr_engine.model is None:
+                print("ASR model not available, skipping")
+                return
 
-            if transcription and transcription.strip():
-                print(f"Transcription: {transcription}")
-                self.transcription_ready.emit(transcription.strip())
-            else:
-                print("No speech detected in audio chunk")
+            # Wrap transcription in try-except to catch CUDA errors
+            try:
+                # Transcribe audio
+                transcription = self.asr_engine.transcribe_audio_array(
+                    audio_data, self.sample_rate
+                )
+
+                if transcription and transcription.strip():
+                    print(f"Transcription: {transcription}")
+                    self.transcription_ready.emit(transcription.strip())
+                else:
+                    print("No speech detected in audio chunk")
+            
+            except RuntimeError as e:
+                error_str = str(e)
+                if "CUDA" in error_str or "cuda" in error_str.lower():
+                    print(f"CUDA error during transcription: {e}")
+                    print("Skipping this chunk to avoid crash")
+                    # Don't emit error - just skip this chunk silently
+                    return
+                else:
+                    # Re-raise non-CUDA RuntimeErrors
+                    raise
 
         except Exception as e:
             error_msg = f"Audio processing error: {str(e)}"
             print(error_msg)
-            self.error_occurred.emit(error_msg)
+            # Only emit error if it's not a CUDA crash
+            error_str = str(e)
+            if "CUDA" not in error_str and "cuda" not in error_str.lower():
+                self.error_occurred.emit(error_msg)
 
     def start_listening(self):
         """Start listening for audio input."""

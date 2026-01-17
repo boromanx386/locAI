@@ -12,9 +12,14 @@
       "num_predict": -1
     },
     "conversation": {
-      "system_prompt": "You are a helpful AI assistant.",
+      "system_prompt": "You are a helpful AI assistant. When you have access to tools (like search_web), use them to get current information from the internet instead of relying only on your training data. Always search the web when asked about recent events, current information, latest news, or topics that may have changed recently.",
       "max_history_messages": 20,
       "use_explicit_history": false
+    },
+    "tools": {
+      "enabled": true,
+      "web_search": true,
+      "weather": true
     }
   },
   "models": {
