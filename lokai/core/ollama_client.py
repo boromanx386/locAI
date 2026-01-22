@@ -296,6 +296,8 @@ class OllamaClient:
         repeat_penalty: Optional[float] = None,
         num_predict: Optional[int] = None,
         seed: Optional[int] = None,
+        stream: bool = False,
+        callback: Optional[Callable[[str], None]] = None,
     ) -> dict:
         """
         Chat API endpoint koji bolje podržava tools/function calling.
@@ -311,6 +313,8 @@ class OllamaClient:
             repeat_penalty: Repeat penalty (optional)
             num_predict: Maximum tokens to generate (optional)
             seed: Seed for reproducibility (optional)
+            stream: Enable streaming (optional)
+            callback: Callback for streaming chunks (optional)
             
         Returns:
             Dict with response message and tool_calls if any
@@ -319,7 +323,7 @@ class OllamaClient:
             payload = {
                 "model": model,
                 "messages": messages,
-                "stream": False,
+                "stream": stream,
             }
             
             # Build options object
@@ -349,12 +353,59 @@ class OllamaClient:
             response = self.session.post(
                 f"{self.base_url}/api/chat",
                 json=payload,
+                stream=stream,
                 timeout=self.timeout,
             )
             
             if response.status_code == 200:
-                data = response.json()
-                return data
+                if stream:
+                    # Streaming mode
+                    full_message = {"role": "assistant", "content": ""}
+                    tool_calls = []
+                    
+                    for line in response.iter_lines():
+                        if line:
+                            try:
+                                data = json.loads(line.decode("utf-8"))
+                                
+                                if "message" in data:
+                                    msg = data["message"]
+                                    
+                                    # Content chunks
+                                    if "content" in msg and msg["content"]:
+                                        chunk = msg["content"]
+                                        full_message["content"] += chunk
+                                        if callback:
+                                            callback(chunk)
+                                    
+                                    # Tool calls
+                                    if "tool_calls" in msg and msg["tool_calls"]:
+                                        for tool_call in msg["tool_calls"]:
+                                            existing = next((tc for tc in tool_calls if tc.get("id") == tool_call.get("id")), None)
+                                            if existing:
+                                                if "function" in tool_call and "arguments" in tool_call["function"]:
+                                                    if "function" not in existing:
+                                                        existing["function"] = {}
+                                                    if "arguments" not in existing["function"]:
+                                                        existing["function"]["arguments"] = ""
+                                                    existing["function"]["arguments"] += tool_call["function"]["arguments"]
+                                            else:
+                                                tool_calls.append(tool_call)
+                                
+                                if data.get("done", False):
+                                    break
+                                    
+                            except json.JSONDecodeError:
+                                continue
+                    
+                    result = {"message": full_message}
+                    if tool_calls:
+                        result["message"]["tool_calls"] = tool_calls
+                    return result
+                else:
+                    # Non-streaming
+                    data = response.json()
+                    return data
             else:
                 error_data = response.json() if response.headers.get('content-type', '').startswith('application/json') else {}
                 error_msg = error_data.get("error", response.text)

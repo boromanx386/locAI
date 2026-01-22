@@ -42,6 +42,7 @@ from lokai.ui.video_worker import VideoGenerationWorker
 from lokai.ui.audio_worker import AudioGenerationWorker
 from lokai.core.asr_engine import ASREngine
 from lokai.core.tools_handler import get_available_tools, execute_tool
+from lokai.ui.attachments import read_text_file_with_limits, format_file_size
 
 
 class MainWindow(QMainWindow):
@@ -476,7 +477,10 @@ class MainWindow(QMainWindow):
             storage_path = self.config_manager.get("asr.storage_path")
             if not storage_path:
                 storage_path = self.config_manager.get("models.storage_path")
-            self.asr_engine = ASREngine(storage_path)
+            
+            # Get device from config (default to CPU)
+            device = self.config_manager.get("asr.device", "cpu")
+            self.asr_engine = ASREngine(storage_path, device=device)
 
             if not self.asr_engine.is_available():
                 print("ASR engine not available (NeMo not installed)")
@@ -484,12 +488,58 @@ class MainWindow(QMainWindow):
                 return
 
             print("ASR engine initialized")
+            
+            # Preload ASR model by starting and stopping voice input
+            # This loads the model in background, avoiding 10-15 second delay on first use
+            QTimer.singleShot(1000, self._preload_asr_by_start_stop)
 
         except Exception as e:
             print(f"Error initializing ASR engine: {e}")
             import traceback
             traceback.print_exc()
             self.asr_engine = None
+    
+    def _preload_asr_by_start_stop(self):
+        """Preload ASR model by starting and stopping voice input (like user clicked)."""
+        try:
+            # Check if voice input widget is available
+            if not hasattr(self, 'chat_widget') or self.chat_widget is None:
+                return
+            
+            if not hasattr(self.chat_widget, 'voice_input_widget') or self.chat_widget.voice_input_widget is None:
+                return
+            
+            voice_widget = self.chat_widget.voice_input_widget
+            
+            # Check if asr_worker is available
+            if not hasattr(voice_widget, 'asr_worker') or voice_widget.asr_worker is None:
+                return
+            
+            # Connect to listening_started signal to know when model is loaded
+            def on_listening_started():
+                # Model is loaded, now stop voice input
+                QTimer.singleShot(100, lambda: self._stop_voice_input_for_preload(voice_widget))
+                try:
+                    voice_widget.asr_worker.listening_started.disconnect(on_listening_started)
+                except:
+                    pass  # Already disconnected
+            
+            voice_widget.asr_worker.listening_started.connect(on_listening_started)
+            
+            # Start voice input (this will load the model in background)
+            print("[ASR Preload] Starting voice input to load model...")
+            voice_widget.start_voice_input()
+            
+        except Exception as e:
+            print(f"[ASR Preload] Error preloading ASR: {e}")
+    
+    def _stop_voice_input_for_preload(self, voice_widget):
+        """Stop voice input after preload."""
+        try:
+            voice_widget.stop_voice_input()
+            print("[ASR Preload] Voice input stopped, model loaded and ready")
+        except Exception as e:
+            print(f"[ASR Preload] Error stopping voice input: {e}")
 
     def _init_global_shortcuts(self):
         """Initialize global keyboard shortcuts for system-wide text selection."""
@@ -875,6 +925,48 @@ class MainWindow(QMainWindow):
             )
             return
 
+        # Consume pending file attachments (next-message-only) and build augmented content for model
+        attachments = self.chat_widget.consume_attachments()
+        augmented_parts = [message] if message.strip() else []
+        max_chars_per_file = self.config_manager.get(
+            "chat.attachments.max_chars_per_file", 50_000
+        )
+        max_total_chars = self.config_manager.get(
+            "chat.attachments.max_total_chars", 150_000
+        )
+        total_chars = len(augmented_parts[0]) if augmented_parts else 0
+        truncated_total = False
+        for att in attachments:
+            if total_chars >= max_total_chars:
+                truncated_total = True
+                break
+            remaining = max_total_chars - total_chars
+            limit = min(max_chars_per_file, remaining)
+            content, err = read_text_file_with_limits(
+                att["path"], max_chars=limit
+            )
+            if err:
+                augmented_parts.append(
+                    f"(Could not read {att['name']}: {err})"
+                )
+                total_chars += len(augmented_parts[-1])
+                continue
+            block = (
+                f"Attached file: {att['name']} ({format_file_size(att['size'])})\n```\n{content}\n```"
+            )
+            augmented_parts.append(block)
+            total_chars += len(block)
+        if truncated_total:
+            augmented_parts.append(
+                f"(Attachment limit reached: max {max_total_chars} chars total.)"
+            )
+        augmented = "\n\n".join(augmented_parts) if augmented_parts else ""
+        display_msg = (
+            message
+            if message.strip()
+            else (f"📎 {len(attachments)} file(s) attached" if attachments else "")
+        )
+
         # Auto-unload image model before LLM generation to free GPU memory
         if self.image_generator and self.image_generator.pipeline is not None:
             print("Auto-unloading image model to free GPU memory...")
@@ -927,12 +1019,12 @@ class MainWindow(QMainWindow):
         self.last_used_model = model
         self.last_was_vision = is_vision_request
 
-        # Send message to Ollama
+        # Send message to Ollama (UI bubble uses display_msg; model gets augmented)
         self.chat_widget.add_user_message(
-            message, image_path=image_path if image_path else None
+            display_msg, image_path=image_path if image_path else None
         )
 
-        # Add to conversation history
+        # Add to conversation history (store original message)
         user_message_index = len(self.conversation_history)
         self.conversation_history.append({"role": "user", "content": message})
 
@@ -981,7 +1073,7 @@ class MainWindow(QMainWindow):
         ):  # Don't use semantic memory for vision requests
             try:
                 final_prompt = self._build_prompt_with_semantic_memory(
-                    message, system_prompt, max_history
+                    augmented, system_prompt, max_history
                 )
             except Exception as e:
                 print(f"Error building prompt with semantic memory: {e}")
@@ -991,7 +1083,7 @@ class MainWindow(QMainWindow):
                 # Fallback to normal prompt on error
                 use_explicit_history = True
                 final_prompt = self._build_normal_prompt(
-                    message, system_prompt, max_history
+                    augmented, system_prompt, max_history
                 )
         elif use_explicit_history:
             # Build prompt with explicit history (optimized for performance)
@@ -1019,18 +1111,21 @@ class MainWindow(QMainWindow):
                 role_prefix = "User: " if msg["role"] == "user" else "Assistant: "
                 prompt_parts.append(role_prefix + msg["content"])
 
-            # Add current message
-            prompt_parts.append(f"User: {message}")
+            # Add current message (augmented with attachment content for model)
+            prompt_parts.append(f"User: {augmented}")
             prompt_parts.append("Assistant:")
 
             # Single join operation (much faster than multiple concatenations)
             final_prompt = "\n\n".join(prompt_parts)
         else:
-            # Use only current message (context handles history)
-            final_prompt = message
+            # Use only current message (context handles history); use augmented for model
+            final_prompt = augmented
 
         # Don't create AI bubble yet - wait for first chunk
         # This prevents empty bubble from appearing immediately
+        
+        # Start AI message and show model status in footer
+        self.chat_widget.start_ai_message(model)
 
         # Check if tools are enabled
         tools_enabled = self.config_manager.get("ollama.tools.enabled", False)
@@ -1038,7 +1133,7 @@ class MainWindow(QMainWindow):
         
         if use_tools:
             # Use ChatToolsWorker with /api/chat endpoint for tools support
-            tools = get_available_tools()
+            tools = get_available_tools(self.config_manager)
             
             # Convert conversation history to messages format for chat endpoint
             messages = []
@@ -1058,8 +1153,8 @@ class MainWindow(QMainWindow):
                     "content": msg["content"]
                 })
             
-            # Add current user message
-            messages.append({"role": "user", "content": message})
+            # Add current user message (augmented with attachment content for model)
+            messages.append({"role": "user", "content": augmented})
             
             # Create ChatToolsWorker
             worker = ChatToolsWorker(
@@ -1073,7 +1168,10 @@ class MainWindow(QMainWindow):
             worker.chunk_received.connect(self._on_chunk_received)
             worker.finished.connect(lambda content: self._on_tools_response_finished(content))
             worker.error_occurred.connect(self._on_response_error)
-            worker.tool_call_executed.connect(lambda name, result: print(f"[TOOLS] {name} rezultat: {result[:100]}..."))
+            def on_tool_executed(name: str, result: str):
+                if name:
+                    self.chat_widget.update_tool_status(name)
+            worker.tool_call_executed.connect(on_tool_executed)
         else:
             # Use regular OllamaWorker with /api/generate endpoint
             worker = OllamaWorker(
@@ -1466,9 +1564,12 @@ class MainWindow(QMainWindow):
     def _on_chunk_received(self, chunk: str):
         """Handle chunk received from worker."""
         try:
-            # Create bubble on first chunk if it doesn't exist
+            # Status indicator and typing indicator already set in start_ai_message()
+            # Just create bubble on first chunk if it doesn't exist (should already exist)
             if self.chat_widget.current_ai_bubble is None:
-                self.chat_widget.start_ai_message()
+                # Fallback: create message if somehow not created
+                model = self.status_panel.get_selected_model()
+                self.chat_widget.start_ai_message(model if model else None)
             # Append chunk (only if non-empty - but allow whitespace like newlines)
             if chunk:
                 self.chat_widget.append_ai_chunk(chunk)
@@ -1702,7 +1803,8 @@ class MainWindow(QMainWindow):
                 self.chat_widget.finish_ai_message()
             else:
                 # If no chunks received, show error
-                self.chat_widget.start_ai_message()
+                model = self.status_panel.get_selected_model()
+                self.chat_widget.start_ai_message(model if model else None)
                 self.chat_widget.append_ai_chunk("No response received from model.")
                 self.chat_widget.finish_ai_message()
             # Re-enable send button
@@ -1761,7 +1863,8 @@ class MainWindow(QMainWindow):
                 self.chat_widget.finish_ai_message()
             else:
                 # If no content, show error
-                self.chat_widget.start_ai_message()
+                model = self.status_panel.get_selected_model()
+                self.chat_widget.start_ai_message(model if model else None)
                 self.chat_widget.append_ai_chunk("No response received from model.")
                 self.chat_widget.finish_ai_message()
             
@@ -1793,7 +1896,8 @@ class MainWindow(QMainWindow):
         try:
             # Create bubble if it doesn't exist
             if self.chat_widget.current_ai_bubble is None:
-                self.chat_widget.start_ai_message()
+                model = self.status_panel.get_selected_model()
+                self.chat_widget.start_ai_message(model if model else None)
             # Show error message
             error_msg = f"[Error: {error}]"
             self.chat_widget.append_ai_chunk(error_msg)
@@ -2651,7 +2755,7 @@ class ChatToolsWorker(QThread):
         self.messages = messages  # List of messages in chat format
         self.tools = tools
         self.llm_params = llm_params or {}
-        self.max_iterations = 5  # Max tool call iterations to avoid loops
+        self.max_iterations = 50 # Max tool call iterations to avoid loops
         
     def run(self):
         """Run in background thread - handle tool calls automatically."""
@@ -2662,7 +2766,12 @@ class ChatToolsWorker(QThread):
             while iteration < self.max_iterations:
                 iteration += 1
                 
-                # Call chat_with_tools
+                # Callback for streaming
+                def on_chunk(chunk: str):
+                    if chunk:
+                        self.chunk_received.emit(chunk)
+                
+                # Call chat_with_tools with streaming
                 result = self.client.chat_with_tools(
                     model=self.model,
                     messages=current_messages,
@@ -2674,6 +2783,8 @@ class ChatToolsWorker(QThread):
                     repeat_penalty=self.llm_params.get("repeat_penalty"),
                     num_predict=self.llm_params.get("num_predict"),
                     seed=self.llm_params.get("seed"),
+                    stream=True,
+                    callback=on_chunk,
                 )
                 
                 if "error" in result:
@@ -2698,6 +2809,9 @@ class ChatToolsWorker(QThread):
                         tool_id = tool_call["id"]
                         
                         print(f"[TOOLS] Izvršavam {func_name} sa argumentima: {func_args}")
+                        
+                        # Emit tool call signal BEFORE execution to show status
+                        self.tool_call_executed.emit(func_name, "")
                         
                         # Execute tool
                         try:
@@ -2725,18 +2839,8 @@ class ChatToolsWorker(QThread):
                     current_messages.extend(tool_results)
                     continue  # Loop again to get final response
                 
-                # No tool calls - emit response content
+                # No tool calls - finish
                 if content:
-                    # Stream content preserving newlines for proper formatting
-                    lines = content.split('\n')
-                    for i, line in enumerate(lines):
-                        words = line.split()
-                        for word in words:
-                            self.chunk_received.emit(word + " ")
-                        # Add newline after each line except the last
-                        if i < len(lines) - 1:
-                            self.chunk_received.emit("\n")
-                    
                     self.finished.emit(content)
                     return
                 else:

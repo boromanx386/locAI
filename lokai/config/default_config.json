@@ -19,7 +19,8 @@
     "tools": {
       "enabled": true,
       "web_search": true,
-      "weather": true
+      "weather": true,
+      "scrape_webpage": false
     }
   },
   "models": {
@@ -129,6 +130,7 @@
     "enabled": true,
     "model": "nvidia/nemotron-speech-streaming-en-0.6b",
     "storage_path": null,
+    "device": "cpu",
     "chunk_size_ms": 560,
     "att_context_size": [70, 6],
     "language": "en",
@@ -140,6 +142,14 @@
     "min_silence_duration": 0.5
   },
   "prompts": [],
-  "first_run": true
+  "first_run": true,
+  "chat": {
+    "attachments": {
+      "enabled": true,
+      "max_files": 5,
+      "max_chars_per_file": 50000,
+      "max_total_chars": 150000
+    }
+  }
 }
 

@@ -26,13 +26,20 @@ from PySide6.QtGui import (
     QDropEvent,
     QKeyEvent,
     QTextOption,
+    QDesktopServices,
 )
+from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import QGraphicsDropShadowEffect, QSizePolicy
 import re
 from lokai.core.ollama_client import OllamaClient
 from lokai.core.image_processor import ImageProcessor
 from lokai.core.config_manager import ConfigManager
 from lokai.ui.material_icons import MaterialIcons
+from lokai.ui.attachments import (
+    is_allowed_attachment,
+    format_file_size,
+    is_probably_binary,
+)
 import os
 import subprocess
 import platform
@@ -43,6 +50,7 @@ class ChatInputField(QTextEdit):
 
     send_requested = Signal()  # Signal emitted when Enter is pressed (without Shift)
     mode_change_requested = Signal()  # Signal emitted when Shift+Tab is pressed
+    files_dropped = Signal(list)  # Signal(list of local file paths) when files dropped on input
 
     def keyPressEvent(self, event: QKeyEvent):
         """Handle key press events."""
@@ -68,6 +76,31 @@ class ChatInputField(QTextEdit):
             # All other keys: default behavior
             super().keyPressEvent(event)
 
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        """Accept drops of local files (images or text/code attachments)."""
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            for url in urls:
+                path = url.toLocalFile()
+                if path and path.strip():
+                    event.acceptProposedAction()
+                    return
+        event.ignore()
+
+    def dropEvent(self, event: QDropEvent):
+        """Emit files_dropped with local file paths when files are dropped."""
+        if event.mimeData().hasUrls():
+            paths = []
+            for url in event.mimeData().urls():
+                path = url.toLocalFile()
+                if path and path.strip() and os.path.isfile(path):
+                    paths.append(path)
+            if paths:
+                self.files_dropped.emit(paths)
+                event.acceptProposedAction()
+                return
+        event.ignore()
+
 
 class ChatBubbleTextEdit(QTextEdit):
     """Custom QTextEdit for chat bubbles that prevents scrolling."""
@@ -75,6 +108,12 @@ class ChatBubbleTextEdit(QTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._update_height_callback = None
+        # Enable mouse tracking for real-time cursor updates
+        self.setMouseTracking(True)
+        # Set default cursor to arrow on viewport (not I-beam for text selection)
+        self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
+        # Install event filter on viewport to control cursor
+        self.viewport().installEventFilter(self)
 
     def set_update_height_callback(self, callback):
         """Set callback to update height when widget resizes."""
@@ -120,6 +159,56 @@ class ChatBubbleTextEdit(QTextEdit):
 
         # After any key press, ensure we're at the top
         QTimer.singleShot(0, lambda: self.verticalScrollBar().setValue(0))
+
+    def eventFilter(self, obj, event):
+        """Event filter to control cursor on viewport."""
+        if obj == self.viewport() and event.type() == QEvent.Type.MouseMove:
+            # Check if over a link
+            try:
+                pos = event.position().toPoint() if hasattr(event, 'position') else event.pos()
+            except:
+                pos = event.pos()
+            anchor = self.anchorAt(pos)
+            if anchor:
+                self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
+            else:
+                self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
+        return super().eventFilter(obj, event)
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        """Handle mouse move events to change cursor based on link position."""
+        # Call super first, then override cursor
+        super().mouseMoveEvent(event)
+        # Use pos() for compatibility (PySide6/Qt6)
+        try:
+            pos = event.position().toPoint() if hasattr(event, 'position') else event.pos()
+        except:
+            pos = event.pos()
+        anchor = self.anchorAt(pos)
+        if anchor:
+            # Show pointing hand cursor over links
+            self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            # Show arrow cursor (not I-beam) when not over links
+            self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
+
+    def mousePressEvent(self, event: QMouseEvent):
+        """Handle mouse press events to open links."""
+        # Check if clicked position is on a link
+        # Use pos() for compatibility (PySide6/Qt6)
+        try:
+            pos = event.position().toPoint() if hasattr(event, 'position') else event.pos()
+        except:
+            pos = event.pos()
+        anchor = self.anchorAt(pos)
+        if anchor:
+            # Open link in default browser
+            QDesktopServices.openUrl(QUrl(anchor))
+            event.accept()
+            return
+        
+        # Otherwise, use default behavior (text selection)
+        super().mousePressEvent(event)
 
 
 class ChatBubble(QFrame):
@@ -225,6 +314,8 @@ class ChatBubble(QFrame):
             )
             self.label.setTextInteractionFlags(
                 Qt.TextInteractionFlag.TextSelectableByMouse
+                | Qt.TextInteractionFlag.LinksAccessibleByMouse
+                | Qt.TextInteractionFlag.LinksAccessibleByKeyboard
             )
             # Set alignment
             if self.is_user:
@@ -385,6 +476,21 @@ class ChatBubble(QFrame):
             html,
         )
 
+        # Links: [text](url) -> <a href="url">text</a> (markdown format)
+        html = re.sub(
+            r"\[([^\]]+?)\]\(([^\)]+?)\)",
+            r'<a href="\2" style="color: #4A9EFF; text-decoration: underline;">\1</a>',
+            html,
+        )
+
+        # Plain URLs: http://... or https://... -> <a href="url">url</a>
+        # Only match URLs that aren't already inside <a> tags
+        html = re.sub(
+            r'(?<!href=")(?<!>)(https?://[^\s<>"{}|\\^`\[\]]+?)(?![^<]*</a>)',
+            r'<a href="\1" style="color: #4A9EFF; text-decoration: underline;">\1</a>',
+            html,
+        )
+
         # Headers
         html = re.sub(
             r"^### (.+)$",
@@ -426,6 +532,8 @@ class ChatBubble(QFrame):
             )
             self.label.setTextInteractionFlags(
                 Qt.TextInteractionFlag.TextSelectableByMouse
+                | Qt.TextInteractionFlag.LinksAccessibleByMouse
+                | Qt.TextInteractionFlag.LinksAccessibleByKeyboard
             )
             if self.is_user:
                 self.label.setAlignment(
@@ -718,6 +826,10 @@ class ChatWidget(QWidget):
         self.image_processor = ImageProcessor()
         self.last_uploaded_image = None  # Path to last uploaded image
 
+        # Pending file attachments (text/code): list of {path, name, size}
+        self.pending_attachments: list[dict] = []
+        self._attachment_chips: dict[str, QWidget] = {}  # path -> chip widget
+
         # Debounce timer for scroll (prevents too frequent scrolling)
         self.scroll_timer = QTimer()
         self.scroll_timer.setSingleShot(True)
@@ -753,6 +865,19 @@ class ChatWidget(QWidget):
 
         # Input area
         self.input_frame = QFrame()
+        input_frame_v = QVBoxLayout()
+        input_frame_v.setContentsMargins(0, 0, 0, 0)
+        input_frame_v.setSpacing(4)
+
+        # Attachments row (chips above input) – hidden when empty
+        self.attachments_container = QWidget()
+        self.attachments_layout = QHBoxLayout()
+        self.attachments_layout.setContentsMargins(12, 4, 12, 0)
+        self.attachments_layout.setSpacing(6)
+        self.attachments_container.setLayout(self.attachments_layout)
+        self.attachments_container.hide()
+        input_frame_v.addWidget(self.attachments_container)
+
         input_layout = QHBoxLayout()
         input_layout.setContentsMargins(12, 8, 12, 8)
         input_layout.setSpacing(8)
@@ -785,6 +910,8 @@ class ChatWidget(QWidget):
         self.input_field.send_requested.connect(self.send_message)
         # Connect Shift+Tab to cycle mode
         self.input_field.mode_change_requested.connect(self.cycle_mode)
+        # Connect file drop on input -> route to image upload or attachments
+        self.input_field.files_dropped.connect(self._on_files_dropped)
         input_layout.addWidget(self.input_field, stretch=1)
 
         # Voice input button (STT) - placed before prompt button
@@ -888,12 +1015,23 @@ class ChatWidget(QWidget):
 
         # Status indicator (for showing when LLM is generating)
         self.status_indicator = QLabel("")
-        self.status_indicator.setMaximumWidth(20)
-        self.status_indicator.setMaximumHeight(20)
+        self.status_indicator.setMaximumHeight(24)
         self.status_indicator.setVisible(False)
+        self.status_indicator.setStyleSheet("""
+            QLabel {
+                background-color: rgba(74, 158, 255, 0.2);
+                border: 1px solid rgba(74, 158, 255, 0.5);
+                border-radius: 12px;
+                padding: 4px 10px;
+                color: #4A9EFF;
+                font-size: 11px;
+                font-weight: 500;
+            }
+        """)
         input_layout.addWidget(self.status_indicator)
 
-        self.input_frame.setLayout(input_layout)
+        input_frame_v.addLayout(input_layout)
+        self.input_frame.setLayout(input_frame_v)
         layout.addWidget(self.input_frame)
 
         # Voice input widget (initially hidden)
@@ -932,8 +1070,12 @@ class ChatWidget(QWidget):
         self.messages_layout.insertWidget(self.messages_layout.count() - 1, bubble)
         self.scroll_to_bottom()
 
-    def start_ai_message(self):
-        """Start a new AI message (for streaming)."""
+    def start_ai_message(self, model_name: str = None):
+        """Start a new AI message (for streaming).
+        
+        Args:
+            model_name: Optional name of the model being used
+        """
         # Show typing indicator instead of empty bubble
         if self.typing_indicator is None:
             self.typing_indicator = TypingIndicator()
@@ -944,16 +1086,13 @@ class ChatWidget(QWidget):
 
         self.scroll_to_bottom()
         # Show status indicator
+        if model_name:
+            self.status_indicator.setText(f"⚡ {model_name}")
+            self.status_indicator.setToolTip(f"Generating response with {model_name}...")
+        else:
+            self.status_indicator.setText("⚡ Generating...")
+            self.status_indicator.setToolTip("Generating response...")
         self.status_indicator.setVisible(True)
-        self.status_indicator.setStyleSheet(
-            """
-            QLabel {
-                background-color: #4A9EFF;
-                border-radius: 12px;
-            }
-        """
-        )
-        self.status_indicator.setToolTip("Generating response...")
 
     def append_ai_chunk(self, chunk: str):
         """Append chunk to current AI message (streaming)."""
@@ -987,6 +1126,17 @@ class ChatWidget(QWidget):
         self.pending_scroll = True
         if not self.scroll_timer.isActive():
             self.scroll_timer.start(150)  # Scroll max every 150ms
+
+    def update_tool_status(self, tool_name: str):
+        """Update status indicator to show tool being executed."""
+        if not tool_name:
+            return
+        # Format tool name nicely (e.g. "search_web" -> "Search web")
+        display_name = tool_name.replace("_", " ").title()
+        self.status_indicator.setText(f"🔧 {display_name}")
+        self.status_indicator.setToolTip(f"Executing {display_name}...")
+        self.status_indicator.setVisible(True)
+        print(f"[UI] Status updated to: 🔧 {display_name}")
 
     def finish_ai_message(self):
         """Finish current AI message."""
@@ -1542,7 +1692,11 @@ class ChatWidget(QWidget):
     def send_message(self):
         """Send message from input field."""
         message = self.input_field.toPlainText().strip()
-        if not message and not self.last_uploaded_image:
+        has_content = bool(message or self.last_uploaded_image)
+        has_attach_only = (
+            not self.audio_mode and not self.image_mode and bool(self.pending_attachments)
+        )
+        if not has_content and not has_attach_only:
             return
 
         # Get image path if available
@@ -1692,6 +1846,126 @@ class ChatWidget(QWidget):
         print(
             f"Image uploaded: {image_path} ({img_info['width']}x{img_info['height']})"
         )
+
+    def _on_files_dropped(self, paths: list):
+        """Route dropped files: images -> handle_image_upload, others -> add_attachments."""
+        if not paths:
+            return
+        images = [p for p in paths if self.image_processor.is_supported_image(p)]
+        if images:
+            self.handle_image_upload(images[0])
+            return
+        enabled = True
+        if self.config_manager:
+            enabled = self.config_manager.get("chat.attachments.enabled", True)
+        if not enabled:
+            return
+        self.add_attachments(paths)
+
+    def _make_attachment_chip(self, path: str, name: str, size_bytes: int) -> QWidget:
+        """Build a chip widget: filename + size + remove button."""
+        chip = QFrame()
+        chip.setStyleSheet("""
+            QFrame {
+                background: rgba(74, 158, 255, 0.2);
+                border: 1px solid rgba(74, 158, 255, 0.5);
+                border-radius: 8px;
+                padding: 2px 6px;
+            }
+        """)
+        chip_layout = QHBoxLayout()
+        chip_layout.setContentsMargins(6, 2, 4, 2)
+        chip_layout.setSpacing(4)
+        label = QLabel(f"📎 {name} ({format_file_size(size_bytes)})")
+        label.setStyleSheet("color: #E0E0E0; font-size: 12px;")
+        label.setToolTip(path)
+        chip_layout.addWidget(label)
+        remove_btn = QPushButton("×")
+        remove_btn.setFixedSize(20, 20)
+        remove_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: #A0A0A0;
+                border: none;
+                font-size: 14px;
+            }
+            QPushButton:hover { color: #FF6B6B; }
+        """)
+        remove_btn.setToolTip("Remove attachment")
+        remove_btn.clicked.connect(lambda: self._remove_attachment(path))
+        chip_layout.addWidget(remove_btn)
+        chip.setLayout(chip_layout)
+        return chip
+
+    def _remove_attachment(self, path: str):
+        """Remove one attachment by path and hide container if empty."""
+        for i, att in enumerate(self.pending_attachments):
+            if att["path"] == path:
+                self.pending_attachments.pop(i)
+                break
+        w = self._attachment_chips.pop(path, None)
+        if w:
+            self.attachments_layout.removeWidget(w)
+            w.deleteLater()
+        if not self.pending_attachments:
+            self.attachments_container.hide()
+
+    def add_attachments(self, paths: list):
+        """Add file paths as pending attachments; show chips above input."""
+        max_files = 5
+        if self.config_manager:
+            max_files = self.config_manager.get("chat.attachments.max_files", 5)
+        max_file_size_bytes = 10 * 1024 * 1024  # 10 MB
+        skipped = []
+        for p in paths:
+            if len(self.pending_attachments) >= max_files:
+                skipped.append(f"{os.path.basename(p)} (max {max_files} files)")
+                continue
+            if not os.path.isfile(p):
+                continue
+            if not is_allowed_attachment(p):
+                skipped.append(f"{os.path.basename(p)} (unsupported type)")
+                continue
+            if any(a["path"] == p for a in self.pending_attachments):
+                continue
+            try:
+                size = os.path.getsize(p)
+            except OSError:
+                skipped.append(f"{os.path.basename(p)} (cannot read)")
+                continue
+            if size > max_file_size_bytes:
+                skipped.append(
+                    f"{os.path.basename(p)} (too large, max {max_file_size_bytes // (1024*1024)} MB)"
+                )
+                continue
+            if is_probably_binary(p):
+                skipped.append(f"{os.path.basename(p)} (binary)")
+                continue
+            name = os.path.basename(p)
+            self.pending_attachments.append({"path": p, "name": name, "size": size})
+            chip = self._make_attachment_chip(p, name, size)
+            self.attachments_layout.addWidget(chip)
+            self._attachment_chips[p] = chip
+        if skipped:
+            QMessageBox.warning(
+                self,
+                "Some files skipped",
+                "Skipped:\n" + "\n".join(skipped[:10])
+                + ("\n..." if len(skipped) > 10 else ""),
+            )
+        if self.pending_attachments:
+            self.attachments_container.show()
+
+    def consume_attachments(self) -> list[dict]:
+        """Return and clear pending attachments (next-message-only)."""
+        out = list(self.pending_attachments)
+        for path in list(self._attachment_chips.keys()):
+            w = self._attachment_chips.pop(path)
+            self.attachments_layout.removeWidget(w)
+            w.deleteLater()
+        self.pending_attachments.clear()
+        self.attachments_container.hide()
+        return out
 
     def _init_voice_input(self):
         """Initialize voice input widget."""

@@ -1040,6 +1040,15 @@ class SettingsDialog(QDialog):
         self.punctuation_check.setChecked(True)
         asr_layout.addRow("", self.punctuation_check)
 
+        # Device selection (CPU/GPU)
+        self.asr_device_combo = QComboBox()
+        self.asr_device_combo.addItems([
+            "CPU (Stable)",
+            "GPU (CUDA - Experimental)"
+        ])
+        self.asr_device_combo.setCurrentIndex(0)  # Default to CPU
+        asr_layout.addRow("Device:", self.asr_device_combo)
+
         asr_group.setLayout(asr_layout)
         layout.addWidget(asr_group)
 
@@ -2548,6 +2557,13 @@ class SettingsDialog(QDialog):
             if index >= 0:
                 self.chunk_size_combo.setCurrentIndex(index)
 
+            # Device selection
+            asr_device = self.config_manager.get("asr.device", "cpu")
+            if asr_device.lower() == "cuda" or asr_device.lower() == "gpu":
+                self.asr_device_combo.setCurrentIndex(1)  # GPU
+            else:
+                self.asr_device_combo.setCurrentIndex(0)  # CPU (default)
+
             asr_lang = self.config_manager.get("asr.language", "en")
             # Handle both "en" and "English" formats
             if asr_lang.lower() in ["english", "en"]:
@@ -2808,6 +2824,13 @@ class SettingsDialog(QDialog):
 
             self.config_manager.set("asr.language", self.asr_language_combo.currentText().split(" ")[0])
             self.config_manager.set("asr.punctuation_capitalization", self.punctuation_check.isChecked())
+
+            # Device selection (CPU/GPU)
+            device_text = self.asr_device_combo.currentText()
+            if "GPU" in device_text or "CUDA" in device_text:
+                self.config_manager.set("asr.device", "cuda")
+            else:
+                self.config_manager.set("asr.device", "cpu")
 
             # Microphone device (store index or None)
             mic_device = self.mic_device_combo.currentData()

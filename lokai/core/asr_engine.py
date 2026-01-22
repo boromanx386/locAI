@@ -25,28 +25,36 @@ except ImportError:
 class ASREngine:
     """ASR engine using NVIDIA Nemotron Speech Streaming."""
 
-    def __init__(self, storage_path: Optional[str] = None):
+    def __init__(self, storage_path: Optional[str] = None, device: Optional[str] = None):
         """
         Initialize ASREngine.
 
         Args:
             storage_path: Path to model storage (from config)
+            device: Device to use ("cpu" or "cuda"). If None, defaults to "cpu"
         """
         self.storage_path = storage_path
         self.model = None
         self.current_model = None
         
-        # Force CPU mode for ASR to avoid CUDA crashes
-        # CUDA crashes are happening in PyTorch C++ layer which Python can't catch
-        # CPU mode is slower but stable
-        self.device = "cpu" if NEMO_AVAILABLE else None
+        # Set device (default to CPU for stability, CUDA can be problematic)
+        if device is None:
+            device = "cpu"
         
-        # Uncomment below to allow GPU (at your own risk):
-        # self.device = (
-        #     "cuda"
-        #     if torch.cuda.is_available()
-        #     else "cpu" if NEMO_AVAILABLE else None
-        # )
+        if device.lower() == "cuda" or device.lower() == "gpu":
+            # Allow GPU if available, but warn about potential CUDA crashes
+            if NEMO_AVAILABLE and torch.cuda.is_available():
+                self.device = "cuda"
+                print("ASR: Using GPU (CUDA) - experimental, may be unstable")
+            else:
+                self.device = "cpu"
+                if not torch.cuda.is_available():
+                    print("ASR: CUDA not available, falling back to CPU")
+                else:
+                    print("ASR: NeMo not available, falling back to CPU")
+        else:
+            # CPU mode (default, stable)
+            self.device = "cpu" if NEMO_AVAILABLE else None
 
         # Chunk size configurations mapping
         self.chunk_configs = {
@@ -108,11 +116,10 @@ class ASREngine:
             # Load model from Hugging Face
             self.model = nemo_asr.models.ASRModel.from_pretrained(model_name)
 
-            # Force CPU mode to avoid CUDA crashes
-            # CUDA crashes happen in C++ layer which Python can't catch
-            self.device = "cpu"
+            # Move model to configured device
             self.model = self.model.to(self.device)
-            print("ASR model loaded on CPU (forced to avoid CUDA crashes)")
+            device_name = "GPU (CUDA)" if self.device == "cuda" else "CPU"
+            print(f"ASR model loaded on {device_name}")
 
             # Set chunk configuration
             if chunk_size_ms in self.chunk_configs:

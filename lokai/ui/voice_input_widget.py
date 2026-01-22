@@ -233,7 +233,10 @@ class VoiceInputWidget(QWidget):
             storage_path = self.config_manager.get("asr.storage_path")
             if not storage_path:
                 storage_path = self.config_manager.get("models.storage_path")
-            self.asr_engine = ASREngine(storage_path)
+            
+            # Get device from config (default to CPU)
+            device = self.config_manager.get("asr.device", "cpu")
+            self.asr_engine = ASREngine(storage_path, device=device)
 
             if not self.asr_engine.is_available():
                 self.status_label.setText("ASR not available")
