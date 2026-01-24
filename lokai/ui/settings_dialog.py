@@ -1108,43 +1108,66 @@ class SettingsDialog(QDialog):
         )
         rag_layout.addRow("", self.rag_force_cpu_check)
 
+        # Auto-embed checkbox (deprecated): this app is manual-only embedding.
+        self.rag_auto_embed_check = QCheckBox("Auto-embed all chat messages (deprecated)")
+        self.rag_auto_embed_check.setToolTip(
+            "Deprecated. Manual-only embedding is enforced: nothing is embedded automatically.\n"
+            "Use right-click 'Remember…' actions in chat bubbles to create memories."
+        )
+        self.rag_auto_embed_check.setChecked(False)
+        self.rag_auto_embed_check.setEnabled(False)
+        rag_layout.addRow("", self.rag_auto_embed_check)
+
+        # Show prompt preview before sending
+        self.show_prompt_preview_check = QCheckBox("Show prompt preview before sending")
+        self.show_prompt_preview_check.setToolTip(
+            "When enabled, shows a preview dialog with the full prompt before sending to the model.\n"
+            "Useful for debugging and understanding what context the model receives."
+        )
+        rag_layout.addRow("", self.show_prompt_preview_check)
+
         rag_group.setLayout(rag_layout)
         layout.addWidget(rag_group)
 
-        # Search parameters group
-        search_group = QGroupBox("Search Parameters")
-        search_layout = QFormLayout()
+        # Manual memory parameters (right-click Remember)
+        manual_group = QGroupBox("Manual Memory (Right-click Remember)")
+        manual_layout = QFormLayout()
 
-        # Semantic memory threshold
-        self.semantic_threshold_spin = QSpinBox()
-        self.semantic_threshold_spin.setRange(5, 100)
-        self.semantic_threshold_spin.setValue(30)
-        self.semantic_threshold_spin.setToolTip(
-            "Number of messages before semantic memory activates. "
-            "Lower = activates sooner, Higher = only for very long conversations."
+        self.manual_min_memories_spin = QSpinBox()
+        self.manual_min_memories_spin.setRange(1, 50)
+        self.manual_min_memories_spin.setValue(3)
+        self.manual_min_memories_spin.setToolTip(
+            "RAG retrieval activates only after at least this many remembered items exist in the chat."
         )
-        search_layout.addRow("Activation Threshold:", self.semantic_threshold_spin)
+        manual_layout.addRow("Min remembered items:", self.manual_min_memories_spin)
 
-        # Top K relevant messages
-        self.top_k_relevant_spin = QSpinBox()
-        self.top_k_relevant_spin.setRange(1, 20)
-        self.top_k_relevant_spin.setValue(5)
-        self.top_k_relevant_spin.setToolTip(
-            "Number of most relevant old messages to include in context."
+        self.memory_top_k_spin = QSpinBox()
+        self.memory_top_k_spin.setRange(1, 20)
+        self.memory_top_k_spin.setValue(3)
+        self.memory_top_k_spin.setToolTip(
+            "How many remembered items to retrieve and inject into context."
         )
-        search_layout.addRow("Top K Relevant Messages:", self.top_k_relevant_spin)
+        manual_layout.addRow("Memory Top K:", self.memory_top_k_spin)
 
-        # Recent messages count
-        self.recent_messages_spin = QSpinBox()
-        self.recent_messages_spin.setRange(5, 50)
-        self.recent_messages_spin.setValue(10)
-        self.recent_messages_spin.setToolTip(
-            "Number of recent messages to always include (in addition to relevant ones)."
+        self.memory_max_chars_spin = QSpinBox()
+        self.memory_max_chars_spin.setRange(200, 10000)
+        self.memory_max_chars_spin.setValue(1200)
+        self.memory_max_chars_spin.setToolTip(
+            "Hard limit for injected memory text to keep small models responsive."
         )
-        search_layout.addRow("Recent Messages Count:", self.recent_messages_spin)
+        manual_layout.addRow("Memory max chars:", self.memory_max_chars_spin)
 
-        search_group.setLayout(search_layout)
-        layout.addWidget(search_group)
+        self.memory_min_similarity_spin = QDoubleSpinBox()
+        self.memory_min_similarity_spin.setRange(0.0, 1.0)
+        self.memory_min_similarity_spin.setSingleStep(0.05)
+        self.memory_min_similarity_spin.setValue(0.0)
+        self.memory_min_similarity_spin.setToolTip(
+            "Optional similarity filter (0 = include all retrieved items)."
+        )
+        manual_layout.addRow("Min similarity:", self.memory_min_similarity_spin)
+
+        manual_group.setLayout(manual_layout)
+        layout.addWidget(manual_group)
 
         # Info label
         info_label = QLabel(
@@ -2316,16 +2339,31 @@ class SettingsDialog(QDialog):
         rag_force_cpu = self.config_manager.get("rag.force_cpu", True)
         self.rag_force_cpu_check.setChecked(rag_force_cpu)
 
-        semantic_threshold = self.config_manager.get(
-            "rag.semantic_memory_threshold", 30
-        )
-        self.semantic_threshold_spin.setValue(semantic_threshold)
+        # Manual-only embedding enforced (ignore any legacy config).
+        if hasattr(self, "rag_auto_embed_check"):
+            self.rag_auto_embed_check.setChecked(False)
 
-        top_k_relevant = self.config_manager.get("rag.top_k_relevant", 5)
-        self.top_k_relevant_spin.setValue(top_k_relevant)
+        # Show prompt preview option
+        show_preview = self.config_manager.get("rag.show_prompt_preview", False)
+        if hasattr(self, "show_prompt_preview_check"):
+            self.show_prompt_preview_check.setChecked(show_preview)
 
-        recent_messages = self.config_manager.get("rag.recent_messages_count", 10)
-        self.recent_messages_spin.setValue(recent_messages)
+        # Manual memory settings
+        manual_min = self.config_manager.get("rag.manual_min_memories", 3)
+        if hasattr(self, "manual_min_memories_spin"):
+            self.manual_min_memories_spin.setValue(int(manual_min))
+
+        memory_top_k = self.config_manager.get("rag.memory_top_k", 3)
+        if hasattr(self, "memory_top_k_spin"):
+            self.memory_top_k_spin.setValue(int(memory_top_k))
+
+        memory_max_chars = self.config_manager.get("rag.memory_max_chars", 1200)
+        if hasattr(self, "memory_max_chars_spin"):
+            self.memory_max_chars_spin.setValue(int(memory_max_chars))
+
+        memory_min_sim = self.config_manager.get("rag.memory_min_similarity", 0.0)
+        if hasattr(self, "memory_min_similarity_spin"):
+            self.memory_min_similarity_spin.setValue(float(memory_min_sim))
 
         # Speed
         speed = self.config_manager.get("tts.speed", 1.0)
@@ -2700,13 +2738,26 @@ class SettingsDialog(QDialog):
             "rag.embedding_model", self.embedding_model_combo.currentText()
         )
         self.config_manager.set("rag.force_cpu", self.rag_force_cpu_check.isChecked())
-        self.config_manager.set(
-            "rag.semantic_memory_threshold", self.semantic_threshold_spin.value()
-        )
-        self.config_manager.set("rag.top_k_relevant", self.top_k_relevant_spin.value())
-        self.config_manager.set(
-            "rag.recent_messages_count", self.recent_messages_spin.value()
-        )
+        # Manual-only embedding enforced (never auto-embed).
+        self.config_manager.set("rag.auto_embed", False)
+        # Show prompt preview option
+        if hasattr(self, "show_prompt_preview_check"):
+            self.config_manager.set("rag.show_prompt_preview", self.show_prompt_preview_check.isChecked())
+        # Manual memory settings
+        if hasattr(self, "manual_min_memories_spin"):
+            self.config_manager.set(
+                "rag.manual_min_memories", self.manual_min_memories_spin.value()
+            )
+        if hasattr(self, "memory_top_k_spin"):
+            self.config_manager.set("rag.memory_top_k", self.memory_top_k_spin.value())
+        if hasattr(self, "memory_max_chars_spin"):
+            self.config_manager.set(
+                "rag.memory_max_chars", self.memory_max_chars_spin.value()
+            )
+        if hasattr(self, "memory_min_similarity_spin"):
+            self.config_manager.set(
+                "rag.memory_min_similarity", self.memory_min_similarity_spin.value()
+            )
 
         # Save prompts
         if hasattr(self, "prompts_list"):

@@ -366,22 +366,18 @@ class PocketTTSEngine:
             if not clean_text:
                 return
             
-            # Split by newlines for pauses between paragraphs
+            # Split by newlines (but don't add pauses - just process all text)
             paragraphs = clean_text.split('\n')
             
             # Prepare text chunks for generation
             text_chunks = []
-            for para_idx, paragraph in enumerate(paragraphs):
+            for paragraph in paragraphs:
                 if not paragraph.strip():
                     continue
                 
                 # Split into chunks for processing (smaller chunks = faster initial playback)
                 chunks = self.split_text_into_chunks(paragraph, max_size=250)
                 text_chunks.extend(chunks)
-                
-                # Add marker for paragraph pause (except last paragraph)
-                if para_idx < len(paragraphs) - 1:
-                    text_chunks.append(None)  # None marks paragraph pause
             
             if not text_chunks:
                 return
@@ -391,12 +387,7 @@ class PocketTTSEngine:
             
             async def generate_chunk_audio(chunk_text):
                 """Generate audio for a single chunk."""
-                if chunk_text is None:
-                    # Paragraph pause
-                    silence_samples = int(self.model.sample_rate * 0.3)
-                    return np.zeros(silence_samples, dtype=np.int16)
-                
-                if not chunk_text.strip():
+                if not chunk_text or not chunk_text.strip():
                     return None
                 
                 try:

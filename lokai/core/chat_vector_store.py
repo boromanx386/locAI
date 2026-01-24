@@ -45,7 +45,9 @@ class ChatVectorStore:
         """
         self.storage_path = Path(storage_path)
         self.embeddings: List[List[float]] = []
-        self.messages: List[Dict] = []  # List of {"role": "...", "content": "...", "index": N}
+        # Stored messages are user-curated "memories" with optional metadata:
+        # {"role": "...", "content": "...", "index": N, "source": "...", "created_at": "...", "chat_id": "...", ...}
+        self.messages: List[Dict] = []
         self._load_from_disk()
 
     def _load_from_disk(self):
@@ -54,9 +56,26 @@ class ChatVectorStore:
             try:
                 with open(self.storage_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    self.embeddings = data.get("embeddings", [])
-                    self.messages = data.get("messages", [])
-                print(f"Loaded {len(self.messages)} embedded messages from disk")
+                    loaded_embeddings = data.get("embeddings", []) or []
+                    loaded_messages = data.get("messages", []) or []
+
+                # Best-effort alignment if file is corrupted / mismatched
+                min_len = min(len(loaded_embeddings), len(loaded_messages))
+                loaded_embeddings = loaded_embeddings[:min_len]
+                loaded_messages = loaded_messages[:min_len]
+
+                # Manual-only semantic memory: keep only user-curated memories.
+                # (Legacy stores may include auto-embedded chat history without "source".)
+                filtered_embeddings = []
+                filtered_messages = []
+                for msg, emb in zip(loaded_messages, loaded_embeddings):
+                    if isinstance(msg, dict) and ("source" in msg):
+                        filtered_messages.append(msg)
+                        filtered_embeddings.append(emb)
+
+                self.embeddings = filtered_embeddings
+                self.messages = filtered_messages
+                print(f"Loaded {len(self.messages)} remembered items from disk")
             except Exception as e:
                 print(f"Error loading vector store: {e}")
                 self.embeddings = []
@@ -80,15 +99,15 @@ class ChatVectorStore:
         Add message with embedding.
 
         Args:
-            message: Message dict with "role" and "content"
+            message: Message dict (must include "role" and "content"; may include extra metadata)
             embedding: Embedding vector
             index: Index in conversation history
         """
-        self.messages.append({
-            "role": message["role"],
-            "content": message["content"],
-            "index": index
-        })
+        stored = dict(message) if isinstance(message, dict) else {}
+        stored["role"] = message["role"]
+        stored["content"] = message["content"]
+        stored["index"] = index
+        self.messages.append(stored)
         self.embeddings.append(embedding)
         # Save periodically (every 10 messages) to avoid too frequent disk writes
         if len(self.messages) % 10 == 0:

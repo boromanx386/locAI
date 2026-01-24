@@ -44,6 +44,13 @@ try:
 except ImportError:
     HAS_BEAUTIFULSOUP = False
 
+# Try to import youtube-transcript-api for YouTube transcripts
+try:
+    from youtube_transcript_api import YouTubeTranscriptApi
+    HAS_YOUTUBE_TRANSCRIPT = True
+except ImportError:
+    HAS_YOUTUBE_TRANSCRIPT = False
+
 import json
 import math
 import re
@@ -753,10 +760,68 @@ def search_youtube(query: Optional[str] = None, video_url: Optional[str] = None,
                         
                         result += f"\nURL: {video_url}\n"
                         
-                        # Ako traži transkript - yt-dlp podržava transkripte, ali je komplikovano
-                        # Za sada samo info, transkript može kasnije
+                        # Ako traži transkript - koristi youtube-transcript-api
                         if get_transcript:
-                            result += "\n[Transcript] Transcript downloading is currently in development. Use 'search_web' tool to search for transcripts."
+                            try:
+                                # Izvuci video ID iz URL-a
+                                video_id = None
+                                if "watch?v=" in video_url:
+                                    video_id = video_url.split("watch?v=")[1].split("&")[0]
+                                elif "youtu.be/" in video_url:
+                                    video_id = video_url.split("youtu.be/")[1].split("?")[0]
+                                
+                                if video_id and HAS_YOUTUBE_TRANSCRIPT:
+                                    print(f"[TOOL] Preuzimam transkript za video ID: {video_id}")
+                                    try:
+                                        # Napravi instancu i pozovi fetch
+                                        api = YouTubeTranscriptApi()
+                                        transcript = api.fetch(video_id, languages=['en'])
+                                        
+                                        # Spoji sve segmente u jedan tekst
+                                        transcript_text = " ".join([item.text for item in transcript])
+                                        print(f"[TOOL] Transkript uspešno preuzet, dužina: {len(transcript_text)} karaktera")
+                                        result += f"\n\n--- Transcript ---\n{transcript_text}\n"
+                                    except Exception as transcript_error:
+                                        print(f"[TOOL] Greška pri preuzimanju transkripta: {transcript_error}")
+                                        # Pokušaj sa drugim jezicima ili bilo kojim dostupnim
+                                        try:
+                                            api = YouTubeTranscriptApi()
+                                            transcript_list = api.list(video_id)
+                                            # Pokušaj prvo sa engleskim
+                                            transcript = transcript_list.find_transcript(['en'])
+                                            transcript_data = transcript.fetch()
+                                            transcript_text = " ".join([item.text for item in transcript_data])
+                                            print(f"[TOOL] Transkript preuzet (engleski), dužina: {len(transcript_text)} karaktera")
+                                            result += f"\n\n--- Transcript (English) ---\n{transcript_text}\n"
+                                        except Exception as e2:
+                                            # Pokušaj sa bilo kojim dostupnim jezikom
+                                            try:
+                                                api = YouTubeTranscriptApi()
+                                                transcript_list = api.list(video_id)
+                                                # Pokušaj prvo sa manually created, pa sa generated
+                                                try:
+                                                    transcript = transcript_list.find_manually_created_transcript(['en'])
+                                                except:
+                                                    transcript = transcript_list.find_generated_transcript(['en'])
+                                                
+                                                transcript_data = transcript.fetch()
+                                                transcript_text = " ".join([item.text for item in transcript_data])
+                                                print(f"[TOOL] Transkript preuzet (alternativni način), dužina: {len(transcript_text)} karaktera")
+                                                result += f"\n\n--- Transcript ---\n{transcript_text}\n"
+                                            except Exception as e3:
+                                                print(f"[TOOL] Svi pokušaji neuspešni. Greške: {transcript_error}, {e2}, {e3}")
+                                                result += f"\n\n[Transcript] Transcript not available for this video. Error: {str(transcript_error)}"
+                                elif video_id and not HAS_YOUTUBE_TRANSCRIPT:
+                                    print(f"[TOOL] youtube-transcript-api biblioteka nije instalirana!")
+                                    result += "\n\n[Transcript] Transcript downloading requires 'youtube-transcript-api' library. Install: pip install youtube-transcript-api"
+                                else:
+                                    print(f"[TOOL] Video ID nije izvučen iz URL-a: {video_url}")
+                                    result += "\n\n[Transcript] Could not extract video ID from URL."
+                            except Exception as e:
+                                print(f"[GREŠKA] Error pri preuzimanju transkripta: {e}")
+                                import traceback
+                                traceback.print_exc()
+                                result += f"\n\n[Transcript] Error fetching transcript: {str(e)}"
                         
                         return result
                 except Exception as e:

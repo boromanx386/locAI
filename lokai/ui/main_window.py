@@ -63,42 +63,23 @@ class MainWindow(QMainWindow):
         self.ollama_detector = OllamaDetector(base_url)
         self.ollama_client = OllamaClient(base_url)
 
-        # Initialize embedding components for semantic memory
+        # Initialize embedding components for semantic memory (lazy loading)
         self.embedding_enabled = config_manager.get("rag.enabled", False)
+        # Manual-only semantic memory: embeddings are created only via UI "Remember…" actions.
+        # (We intentionally ignore any legacy auto-embed setting.)
+        self.rag_auto_embed = False
         self.embedding_workers = []  # Track all embedding workers to clean up properly
-        if self.embedding_enabled:
-            try:
-                force_cpu = config_manager.get("rag.force_cpu", True)
-                self.embedding_client = EmbeddingClient(base_url, force_cpu=force_cpu)
-                # Set embedding model from config
-                embedding_model = config_manager.get(
-                    "rag.embedding_model", "nomic-embed-text:v1.5"
-                )
-                self.embedding_client.default_model = embedding_model
-                # Store embeddings in config directory (will be set per chat)
-                config_dir = Path(config_manager.config_dir)
-                self.embeddings_dir = config_dir / "chat_embeddings"
-                self.embeddings_dir.mkdir(parents=True, exist_ok=True)
-                self.chat_vector_store = None  # Will be initialized per chat
-                self.semantic_memory_threshold = config_manager.get(
-                    "rag.semantic_memory_threshold", 30
-                )
-                self.top_k_relevant = config_manager.get("rag.top_k_relevant", 5)
-                self.recent_messages_count = config_manager.get(
-                    "rag.recent_messages_count", 10
-                )
-            except Exception as e:
-                print(f"Error initializing embedding components: {e}")
-                import traceback
+        # Delay embedding initialization to speed up startup
+        self.embedding_client = None
+        self.chat_vector_store = None
+        self.embeddings_dir = None
+        self.semantic_memory_threshold = None
+        self.top_k_relevant = None
+        self.recent_messages_count = None
 
-                traceback.print_exc()
-                # Disable embedding on error
-                self.embedding_enabled = False
-                self.embedding_client = None
-                self.chat_vector_store = None
-        else:
-            self.embedding_client = None
-            self.chat_vector_store = None
+        if self.embedding_enabled:
+            # Initialize embedding components with delay to avoid blocking startup
+            QTimer.singleShot(500, self._init_embedding_components)
 
         # Current conversation context
         self.current_context = None
@@ -133,10 +114,112 @@ class MainWindow(QMainWindow):
         # No periodic timer - check only when needed (startup, refresh button, or before sending message)
         QTimer.singleShot(2000, self.check_ollama_status)
 
+        # Flag to track if we've cleared auto-loaded models on first message
+        self._startup_models_cleared = False
+
         # Track last status check to avoid redundant checks
         self._last_status_check = None
         self._status_check_interval = 30000  # Only check if 30+ seconds passed
 
+    def _init_embedding_components(self):
+        """Initialize embedding components delayed to speed up startup."""
+        try:
+            base_url = self.config_manager.get("ollama.base_url", "http://localhost:11434")
+            force_cpu = self.config_manager.get("rag.force_cpu", True)
+            self.embedding_client = EmbeddingClient(base_url, force_cpu=force_cpu)
+            # Manual-only: never auto-embed.
+            self.rag_auto_embed = False
+            # Set embedding model from config
+            embedding_model = self.config_manager.get(
+                "rag.embedding_model", "nomic-embed-text:v1.5"
+            )
+            self.embedding_client.default_model = embedding_model
+            # Store embeddings in config directory (will be set per chat)
+            config_dir = Path(self.config_manager.config_dir)
+            self.embeddings_dir = config_dir / "chat_embeddings"
+            self.embeddings_dir.mkdir(parents=True, exist_ok=True)
+            # Initialize vector store for current chat if we already have a chat id
+            if self.current_chat_id:
+                embedding_store_path = (
+                    self.embeddings_dir / f"chat_{self.current_chat_id}.json"
+                )
+                self.chat_vector_store = ChatVectorStore(embedding_store_path)
+            else:
+                self.chat_vector_store = None  # Will be initialized per chat
+            self.semantic_memory_threshold = self.config_manager.get(
+                "rag.semantic_memory_threshold", 30
+            )
+            self.top_k_relevant = self.config_manager.get("rag.top_k_relevant", 5)
+            self.recent_messages_count = self.config_manager.get(
+                "rag.recent_messages_count", 10
+            )
+            print("[Startup] Embedding components initialized")
+        except Exception as e:
+            print(f"Error initializing embedding components: {e}")
+            import traceback
+            traceback.print_exc()
+            # Disable embedding on error
+            self.embedding_enabled = False
+            self.embedding_client = None
+            self.chat_vector_store = None
+
+    def _delayed_load_models(self):
+        """Load models list delayed to avoid loading models at startup."""
+        try:
+            models, model_error = self.ollama_detector.get_llm_and_vision_models()
+            if models:
+                self.status_panel.update_models(models)
+        except Exception as e:
+            print(f"[Startup] Error loading models list: {e}")
+
+    def _clear_ollama_models_at_startup(self):
+        """Clear any models that Ollama may have auto-loaded at startup."""
+        try:
+            if self.ollama_client.is_running():
+                print("[Startup] Clearing any auto-loaded Ollama models to free VRAM...")
+                self.ollama_client.unload_all_models_silent()
+
+                # Also clear GPU memory to ensure it's freed
+                self._clear_gpu_memory()
+        except Exception as e:
+            print(f"[Startup] Error clearing Ollama models: {e}")
+
+    def _clear_gpu_memory(self):
+        """Clear GPU memory aggressively."""
+        try:
+            import torch
+            import gc
+
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+                # Multiple passes to ensure all memory is freed
+                for _ in range(5):
+                    torch.cuda.empty_cache()
+                try:
+                    torch.cuda.ipc_collect()
+                except AttributeError:
+                    pass
+                try:
+                    torch.cuda.reset_peak_memory_stats()
+                except:
+                    pass
+                gc.collect()
+                print("[Startup] GPU memory cleared")
+        except ImportError:
+            pass  # PyTorch not available
+        except Exception as e:
+            print(f"[Startup] Error clearing GPU memory: {e}")
+
+    def _unload_all_ollama_models_at_startup(self):
+        """Unload all Ollama models at startup to free VRAM (Ollama may auto-load default model)."""
+        try:
+            if self.ollama_client.is_running():
+                print("[Startup] Unloading all Ollama models to free VRAM...")
+                self.ollama_client.unload_all_models_silent()
+                print("[Startup] Ollama models unloaded")
+        except Exception as e:
+            print(f"[Startup] Error unloading Ollama models: {e}")
+    
     def _reload_embedding_components(self):
         """Reload embedding components when RAG settings change."""
         # Clean up existing workers
@@ -148,6 +231,8 @@ class MainWindow(QMainWindow):
 
         # Reload config values
         self.embedding_enabled = self.config_manager.get("rag.enabled", False)
+        # Manual-only: never auto-embed (ignore legacy config).
+        self.rag_auto_embed = False
 
         if self.embedding_enabled:
             try:
@@ -156,6 +241,8 @@ class MainWindow(QMainWindow):
                 )
                 force_cpu = self.config_manager.get("rag.force_cpu", True)
                 self.embedding_client = EmbeddingClient(base_url, force_cpu=force_cpu)
+                # Manual-only: never auto-embed.
+                self.rag_auto_embed = False
                 # Set embedding model from config
                 embedding_model = self.config_manager.get(
                     "rag.embedding_model", "nomic-embed-text:v1.5"
@@ -621,10 +708,14 @@ class MainWindow(QMainWindow):
 
             if not self.current_chat_id:
                 self.current_chat_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-            embedding_store_path = (
-                self.embeddings_dir / f"chat_{self.current_chat_id}.json"
-            )
-            self.chat_vector_store = ChatVectorStore(embedding_store_path)
+            # embeddings_dir is initialized lazily in _init_embedding_components
+            if self.embeddings_dir is not None:
+                embedding_store_path = (
+                    self.embeddings_dir / f"chat_{self.current_chat_id}.json"
+                )
+                self.chat_vector_store = ChatVectorStore(embedding_store_path)
+            else:
+                self.chat_vector_store = None  # will be initialized once components are ready
 
         # Update semantic memory status indicator
         if self.embedding_enabled and hasattr(
@@ -659,14 +750,25 @@ class MainWindow(QMainWindow):
         self.chat_widget.text_selected_for_audio.connect(
             self.on_text_selected_for_audio
         )
+        # Manual semantic memory (RAG)
+        if hasattr(self.chat_widget, "remember_selected_text"):
+            self.chat_widget.remember_selected_text.connect(
+                self.on_remember_selected_text
+            )
+        if hasattr(self.chat_widget, "remember_message"):
+            self.chat_widget.remember_message.connect(self.on_remember_message)
+        if hasattr(self.chat_widget, "memory_stats_requested"):
+            self.chat_widget.memory_stats_requested.connect(
+                self.on_memory_stats_requested
+            )
 
-        # Initialize image generator (if enabled)
+        # Initialize image generator (if enabled) - delayed to speed up startup
         self.image_generator = None
         self.video_generator = None
         self.audio_generator = None
-        self._init_image_generator()
-        self._init_video_generator()
-        self._init_audio_generator()
+        QTimer.singleShot(1500, self._init_image_generator)
+        QTimer.singleShot(1500, self._init_video_generator)
+        QTimer.singleShot(1500, self._init_audio_generator)
 
         # Initialize ASR engine (if enabled)
         self.asr_engine = None
@@ -689,8 +791,8 @@ class MainWindow(QMainWindow):
             if index >= 0:
                 self.status_panel.tts_voice_combo.setCurrentIndex(index)
 
-        # Initialize global shortcuts for system-wide text selection
-        self._init_global_shortcuts()
+        # Initialize global shortcuts for system-wide text selection (delayed)
+        QTimer.singleShot(2000, self._init_global_shortcuts)
 
     def create_menu_bar(self):
         """Create application menu bar."""
@@ -798,11 +900,14 @@ class MainWindow(QMainWindow):
 
                 if not has_models:
                     # Only load models if list is empty
-                    # Get LLM and Vision models (exclude embedding)
-                    models, model_error = self.ollama_detector.get_llm_and_vision_models()
-                    if models:
-                        self.status_panel.update_models(models)
+                    # Get LLM and Vision models (exclude embedding) - but delay to avoid loading models at startup
+                    QTimer.singleShot(1000, self._delayed_load_models)
                     self.status_bar.showMessage("Ollama is running")
+
+                    # Clear any auto-loaded models after status check (first time only)
+                    if not self._startup_models_cleared:
+                        QTimer.singleShot(2000, self._clear_ollama_models_at_startup)
+                        self._startup_models_cleared = True
                 else:
                     # Just update status, don't reload models
                     self.status_panel.set_online()
@@ -904,7 +1009,11 @@ class MainWindow(QMainWindow):
 
     def on_message_sent(self, message: str, image_path: str = ""):
         """Handle message sent from chat widget."""
-        # Status check removed to avoid blocking UI
+        # Clear any auto-loaded models if not already done (backup in case user sends message quickly)
+        if not self._startup_models_cleared:
+            self._startup_models_cleared = True
+            print("[First Message] Clearing any auto-loaded Ollama models...")
+            self._clear_ollama_models_at_startup()
 
         # Get selected model
         model = self.status_panel.get_selected_model()
@@ -1019,26 +1128,19 @@ class MainWindow(QMainWindow):
         self.last_used_model = model
         self.last_was_vision = is_vision_request
 
-        # Send message to Ollama (UI bubble uses display_msg; model gets augmented)
-        self.chat_widget.add_user_message(
-            display_msg, image_path=image_path if image_path else None
-        )
-
-        # Add to conversation history (store original message)
+        # Add to conversation history (store original message) before creating bubble
+        # so the bubble can carry the correct message index for manual memory actions.
         user_message_index = len(self.conversation_history)
         self.conversation_history.append({"role": "user", "content": message})
 
-        # Embed user message in background (if embedding enabled)
-        if self.embedding_enabled and self.embedding_client and self.chat_vector_store:
-            try:
-                self._embed_message_async(
-                    {"role": "user", "content": message}, user_message_index
-                )
-            except Exception as e:
-                print(f"Error starting embedding worker: {e}")
-                import traceback
+        # Send message to Ollama (UI bubble uses display_msg; model gets augmented)
+        self.chat_widget.add_user_message(
+            display_msg,
+            image_path=image_path if image_path else None,
+            message_index=user_message_index,
+        )
 
-                traceback.print_exc()
+        # Manual-only semantic memory: never auto-embed user messages.
 
         # Use cached config values (much faster than reading from file each time)
         llm_params = self._llm_params_cache.copy()
@@ -1063,14 +1165,30 @@ class MainWindow(QMainWindow):
             print("Image detected - using None context for vision model")
             use_explicit_history = True
 
-        # Use semantic memory if enabled and history is long enough
+        # Manual memory block (RAG) - user curated, small-context friendly
+        memory_block = ""
         if (
             self.embedding_enabled
             and self.embedding_client
             and self.chat_vector_store
+            and not images_base64
+            and not self.rag_auto_embed
+        ):
+            try:
+                memory_block = self._build_manual_memory_block(message)
+            except Exception as e:
+                print(f"Error building manual memory block: {e}")
+                memory_block = ""
+
+        # Auto semantic memory (legacy behavior) - only when auto-embedding is enabled
+        if (
+            self.rag_auto_embed
+            and self.embedding_enabled
+            and self.embedding_client
+            and self.chat_vector_store
             and len(self.conversation_history) > self.semantic_memory_threshold
             and not images_base64
-        ):  # Don't use semantic memory for vision requests
+        ):
             try:
                 final_prompt = self._build_prompt_with_semantic_memory(
                     augmented, system_prompt, max_history
@@ -1105,6 +1223,8 @@ class MainWindow(QMainWindow):
             prompt_parts = []
             if system_prompt:
                 prompt_parts.append(system_prompt)
+            if memory_block:
+                prompt_parts.append(memory_block)
 
             # Add conversation history
             for msg in history_to_include:
@@ -1120,6 +1240,71 @@ class MainWindow(QMainWindow):
         else:
             # Use only current message (context handles history); use augmented for model
             final_prompt = augmented
+            if memory_block:
+                final_prompt = memory_block + "\n\n" + final_prompt
+
+        # Check if prompt preview is enabled
+        show_preview = self.config_manager.get("rag.show_prompt_preview", False)
+        if show_preview:
+            # Build preview prompt/messages for display
+            preview_prompt = ""
+            preview_type = "Normal"
+            manual_memory_used = bool(memory_block)
+            if manual_memory_used:
+                preview_type = "Manual Memory"
+            
+            # Check if tools are enabled (to determine preview format)
+            tools_enabled_check = self.config_manager.get("ollama.tools.enabled", False)
+            use_tools_check = tools_enabled_check and not images_base64
+            
+            if use_tools_check:
+                # Tools mode: format messages list as readable string
+                preview_messages = []
+                if system_prompt:
+                    preview_messages.append({"role": "system", "content": system_prompt})
+                if memory_block:
+                    preview_messages.append({"role": "system", "content": memory_block})
+                
+                history_to_include = self.conversation_history
+                if max_history > 0:
+                    history_to_include = self.conversation_history[-(max_history + 1) : -1]
+                
+                for msg in history_to_include:
+                    preview_messages.append({
+                        "role": msg["role"],
+                        "content": msg["content"]
+                    })
+                
+                preview_messages.append({"role": "user", "content": augmented})
+                
+                # Format messages as readable string
+                preview_lines = []
+                for msg in preview_messages:
+                    role = msg["role"].upper()
+                    content = msg["content"]
+                    preview_lines.append(f"[{role}]\n{content}")
+                preview_prompt = "\n\n---\n\n".join(preview_lines)
+            else:
+                # Non-tools mode: use final_prompt
+                preview_prompt = final_prompt
+            
+            # Show preview dialog
+            dialog = DebugDialog(self, preview_mode=True)
+            dialog.set_prompt_info(
+                prompt=preview_prompt,
+                prompt_type=preview_type,
+                message_count=len(self.conversation_history),
+                included_count=min(len(self.conversation_history), max_history + 1) if max_history > 0 else len(self.conversation_history),
+                semantic_memory_enabled=manual_memory_used,
+                context_used=not use_explicit_history,
+                context_info=f"Context size: ~{len(self.current_context) if self.current_context else 0} tokens" if self.current_context else "No context yet",
+            )
+            
+            # If user cancels, don't send message
+            if not dialog.exec() or not dialog.user_accepted:
+                # User cancelled - remove the user message bubble we already added
+                # (Actually, we haven't added it yet, so just return)
+                return
 
         # Don't create AI bubble yet - wait for first chunk
         # This prevents empty bubble from appearing immediately
@@ -1141,6 +1326,9 @@ class MainWindow(QMainWindow):
             # Add system prompt if exists
             if system_prompt:
                 messages.append({"role": "system", "content": system_prompt})
+            # Add manual semantic memory (RAG) if available
+            if memory_block:
+                messages.append({"role": "system", "content": memory_block})
             
             # Add conversation history
             history_to_include = self.conversation_history
@@ -1340,7 +1528,9 @@ class MainWindow(QMainWindow):
                         self.chat_widget.add_image_message(image_path, content)
                     else:
                         # Regular user message
-                        self.chat_widget.add_user_message(content)
+                        user_idx = len(self.conversation_history)
+                        self.conversation_history.append({"role": "user", "content": content})
+                        self.chat_widget.add_user_message(content, message_index=user_idx)
                     # Store in history
                     if image_path:
                         self.conversation_history.append(
@@ -1351,15 +1541,13 @@ class MainWindow(QMainWindow):
                             }
                         )
                     else:
-                        self.conversation_history.append(
-                            {"role": "user", "content": content}
-                        )
+                        # already appended above for non-image user messages
+                        pass
                 elif role == "assistant":
                     # AI message
-                    self.chat_widget.add_assistant_message(content)
-                    self.conversation_history.append(
-                        {"role": "assistant", "content": content}
-                    )
+                    assistant_idx = len(self.conversation_history)
+                    self.conversation_history.append({"role": "assistant", "content": content})
+                    self.chat_widget.add_assistant_message(content, message_index=assistant_idx)
 
             # Set model if specified
             if "model" in chat_data and chat_data["model"]:
@@ -1368,24 +1556,6 @@ class MainWindow(QMainWindow):
                     index = self.status_panel.model_combo.findText(model_name)
                     if index >= 0:
                         self.status_panel.model_combo.setCurrentIndex(index)
-
-            # Re-embed messages if needed (in background)
-            if (
-                self.embedding_enabled
-                and self.embedding_client
-                and self.chat_vector_store
-            ):
-                stats = self.chat_vector_store.get_stats()
-                if (
-                    stats.get("total_messages", 0) == 0
-                    and len(self.conversation_history) > 0
-                ):
-                    # No embeddings found, re-embed all messages
-                    print(
-                        f"Re-embedding {len(self.conversation_history)} messages for loaded chat..."
-                    )
-                    for idx, msg in enumerate(self.conversation_history):
-                        self._embed_message_async(msg, idx)
 
             self.status_bar.showMessage(f"Chat loaded from {Path(file_path).name}")
             QMessageBox.information(
@@ -1449,24 +1619,21 @@ class MainWindow(QMainWindow):
             )
             return
 
-        # Get current model and settings
-        model = (
-            self.status_panel.model_combo.currentText()
-            if hasattr(self.status_panel, "model_combo")
-            else self.config_manager.get("ollama.default_model", "llama3.2")
-        )
-
         # Get cached config values
-        llm_params = self._llm_params_cache.copy()
         conv_settings = self._conversation_settings_cache
 
         system_prompt = conv_settings["system_prompt"]
         max_history = conv_settings["max_history"]
         use_explicit_history = conv_settings["use_explicit_history"]
 
-        # Get last message (simulate what would be sent)
-        last_message = self.conversation_history[-1].get("content", "")
-        if not last_message:
+        # Get last user message (that's what on_message_sent builds prompts for)
+        last_user_message = ""
+        for msg in reversed(self.conversation_history):
+            if msg.get("role") == "user" and msg.get("content"):
+                last_user_message = msg.get("content", "")
+                break
+
+        if not last_user_message:
             QMessageBox.information(
                 self, "Debug Prompt", "No message to debug. Send a message first."
             )
@@ -1476,7 +1643,7 @@ class MainWindow(QMainWindow):
         final_prompt = ""
         prompt_type = "Normal"
         included_count = 0
-        semantic_memory_used = False
+        manual_memory_used = False
         context_used = False
         context_info = ""
 
@@ -1484,43 +1651,51 @@ class MainWindow(QMainWindow):
         if self.current_context is None and len(self.conversation_history) > 0:
             use_explicit_history = True
 
-        # Check if semantic memory would be used
+        # Manual semantic memory (RAG) - matches on_message_sent behavior
+        memory_block = ""
         if (
             self.embedding_enabled
             and self.embedding_client
             and self.chat_vector_store
-            and len(self.conversation_history) > self.semantic_memory_threshold
+            and not self.rag_auto_embed
         ):
             try:
-                final_prompt = self._build_prompt_with_semantic_memory(
-                    last_message, system_prompt, max_history
-                )
-                prompt_type = "Semantic Memory"
-                semantic_memory_used = True
-                # Count included messages (approximate)
-                included_count = len(self.conversation_history)
-                context_used = False
-                context_info = "N/A (Semantic Memory uses explicit history in prompt)"
+                memory_block = self._build_manual_memory_block(last_user_message)
             except Exception as e:
-                print(f"Error building semantic memory prompt for debug: {e}")
-                # Fallback to normal
-                use_explicit_history = True
-                final_prompt = self._build_normal_prompt(
-                    last_message, system_prompt, max_history
-                )
-                included_count = min(len(self.conversation_history), max_history + 1)
-                context_used = False
-                context_info = "N/A (Explicit history in prompt)"
-        elif use_explicit_history:
-            final_prompt = self._build_normal_prompt(
-                last_message, system_prompt, max_history
-            )
+                print(f"Error building manual memory block for debug: {e}")
+                memory_block = ""
+
+        manual_memory_used = bool(memory_block)
+        if manual_memory_used:
+            prompt_type = "Manual Memory"
+
+        if use_explicit_history:
+            history_to_include = self.conversation_history
+            if max_history > 0:
+                history_to_include = self.conversation_history[-(max_history + 1) : -1]
+
+            prompt_parts = []
+            if system_prompt:
+                prompt_parts.append(system_prompt)
+            if memory_block:
+                prompt_parts.append(memory_block)
+
+            for msg in history_to_include:
+                role_prefix = "User: " if msg.get("role") == "user" else "Assistant: "
+                prompt_parts.append(role_prefix + (msg.get("content", "") or ""))
+
+            prompt_parts.append(f"User: {last_user_message}")
+            prompt_parts.append("Assistant:")
+            final_prompt = "\n\n".join(prompt_parts)
+
             included_count = min(len(self.conversation_history), max_history + 1)
             context_used = False
             context_info = "N/A (Explicit history in prompt)"
         else:
             # Context-based mode - prompt is just current message, history is in context
-            final_prompt = last_message
+            final_prompt = last_user_message
+            if memory_block:
+                final_prompt = memory_block + "\n\n" + final_prompt
             included_count = 1  # Only current message in prompt
             context_used = True
             if self.current_context:
@@ -1541,11 +1716,45 @@ class MainWindow(QMainWindow):
             prompt_type=prompt_type,
             message_count=len(self.conversation_history),
             included_count=included_count,
-            semantic_memory_enabled=semantic_memory_used,
+            semantic_memory_enabled=manual_memory_used,
             context_used=context_used,
             context_info=context_info,
         )
         dialog.exec()
+
+    def on_memory_stats_requested(self):
+        """Show stats about user-curated semantic memory for this chat."""
+        if not self.embedding_enabled:
+            QMessageBox.information(
+                self,
+                "Semantic Memory Stats",
+                "RAG / Semantic Memory is disabled.\n\nEnable it in Settings to store memories.",
+            )
+            return
+
+        if not self._ensure_semantic_memory_ready():
+            QMessageBox.information(
+                self,
+                "Semantic Memory Stats",
+                "Semantic memory is not ready.\n\nEnable RAG in Settings and ensure Ollama is running.",
+            )
+            return
+
+        try:
+            stats = self.chat_vector_store.get_stats() if self.chat_vector_store else {}
+            count = int(stats.get("total_messages", 0) or 0)
+            path = stats.get("storage_path", "")
+            QMessageBox.information(
+                self,
+                "Semantic Memory Stats",
+                f"Remembered items: {count}\n\nStore: {path}",
+            )
+        except Exception as e:
+            QMessageBox.information(
+                self,
+                "Semantic Memory Stats",
+                f"Could not read memory stats: {e}",
+            )
 
     def show_about(self):
         """Show about dialog."""
@@ -1605,11 +1814,81 @@ class MainWindow(QMainWindow):
         """Callback when embedding is ready."""
         if self.chat_vector_store:
             self.chat_vector_store.add_message(message, embedding, index)
+            # Manual memory is user-curated; persist immediately so small numbers of
+            # remembers aren't lost if the app closes before the periodic save.
+            try:
+                self.chat_vector_store.force_save()
+            except Exception as e:
+                print(f"Error force-saving semantic memory: {e}")
             # Update semantic memory status indicator
             if hasattr(self.status_panel, "update_semantic_memory_status"):
                 stats = self.chat_vector_store.get_stats()
                 message_count = stats.get("total_messages", 0)
                 self.status_panel.update_semantic_memory_status(True, message_count)
+
+    def _build_manual_memory_block(self, query_text: str) -> str:
+        """
+        Build a short, user-curated 'memory' block using semantic search over remembered items.
+        This is designed for small context windows (keeps strict character limits).
+        """
+        if not (self.embedding_enabled and self.embedding_client and self.chat_vector_store):
+            return ""
+
+        stats = self.chat_vector_store.get_stats() if self.chat_vector_store else {}
+        total_memories = int(stats.get("total_messages", 0) or 0)
+        min_needed = int(self.config_manager.get("rag.manual_min_memories", 3) or 3)
+        if total_memories < min_needed:
+            return ""
+
+        query = (query_text or "").strip()
+        if not query:
+            return ""
+
+        top_k = int(self.config_manager.get("rag.memory_top_k", 3) or 3)
+        max_chars = int(self.config_manager.get("rag.memory_max_chars", 1200) or 1200)
+        min_similarity = float(
+            self.config_manager.get("rag.memory_min_similarity", 0.0) or 0.0
+        )
+
+        try:
+            query_embedding = self.embedding_client.generate_embedding(query)
+        except Exception as e:
+            print(f"Error generating query embedding for manual memory: {e}")
+            return ""
+
+        if not query_embedding:
+            return ""
+
+        # For manual memory, we don't exclude recent items (user curated)
+        results = self.chat_vector_store.search(
+            query_embedding, top_k=top_k, exclude_recent=0
+        )
+        if not results:
+            return ""
+
+        lines = [
+            "MEMORY (user-curated; use only if relevant; not new chat messages):"
+        ]
+        used_chars = sum(len(l) for l in lines) + 2
+
+        for r in results:
+            sim = float(r.get("similarity", 0.0) or 0.0)
+            if sim < min_similarity:
+                continue
+            role = "User" if r.get("role") == "user" else "Assistant"
+            content = (r.get("content") or "").strip()
+            if not content:
+                continue
+            item = f"- ({role}) {content}"
+            if used_chars + len(item) + 1 > max_chars:
+                break
+            lines.append(item)
+            used_chars += len(item) + 1
+
+        if len(lines) <= 1:
+            return ""
+
+        return "\n".join(lines)
 
     def _build_prompt_with_semantic_memory(
         self, current_message: str, system_prompt: str, max_history: int
@@ -1771,16 +2050,15 @@ class MainWindow(QMainWindow):
                     self.conversation_history.append(
                         {"role": "assistant", "content": response_text}
                     )
-                    # Embed assistant response in background
-                    if (
-                        self.embedding_enabled
-                        and self.embedding_client
-                        and self.chat_vector_store
-                    ):
-                        self._embed_message_async(
-                            {"role": "assistant", "content": response_text},
-                            assistant_index,
-                        )
+                    # Attach index/role to the visible bubble (for manual memory context menu)
+                    try:
+                        if hasattr(self.chat_widget, "set_current_ai_bubble_metadata"):
+                            self.chat_widget.set_current_ai_bubble_metadata(
+                                role="assistant", message_index=assistant_index
+                            )
+                    except Exception as e:
+                        print(f"Error setting AI bubble metadata: {e}")
+                    # Manual-only semantic memory: never auto-embed assistant messages.
 
                 # Limit history if needed (use cached value)
                 max_history = self._conversation_settings_cache["max_history"]
@@ -1831,16 +2109,15 @@ class MainWindow(QMainWindow):
                 self.conversation_history.append(
                     {"role": "assistant", "content": response_text}
                 )
-                # Embed assistant response in background
-                if (
-                    self.embedding_enabled
-                    and self.embedding_client
-                    and self.chat_vector_store
-                ):
-                    self._embed_message_async(
-                        {"role": "assistant", "content": response_text},
-                        assistant_index,
-                    )
+                # Attach index/role to the visible bubble (for manual memory context menu)
+                try:
+                    if hasattr(self.chat_widget, "set_current_ai_bubble_metadata"):
+                        self.chat_widget.set_current_ai_bubble_metadata(
+                            role="assistant", message_index=assistant_index
+                        )
+                except Exception as e:
+                    print(f"Error setting AI bubble metadata (tools): {e}")
+                # Manual-only semantic memory: never auto-embed assistant messages.
 
                 # Limit history if needed (use cached value)
                 max_history = self._conversation_settings_cache["max_history"]
@@ -1878,18 +2155,6 @@ class MainWindow(QMainWindow):
             traceback.print_exc()
             self.chat_widget.set_send_enabled(True)
             self._on_response_error(error_msg)
-        except Exception as e:
-            print(f"Error in _on_response_finished: {e}")
-            import traceback
-
-            traceback.print_exc()
-            try:
-                if self.chat_widget.current_ai_bubble is not None:
-                    self.chat_widget.finish_ai_message()
-            except:
-                pass
-            # Re-enable send button even on error
-            self.chat_widget.set_send_enabled(True)
 
     def _on_response_error(self, error: str):
         """Handle response error."""
@@ -2238,6 +2503,93 @@ class MainWindow(QMainWindow):
 
         # Generate image using current settings
         self.on_image_prompt_sent(prompt)
+
+    def _ensure_semantic_memory_ready(self) -> bool:
+        """Ensure embedding client + vector store are ready for manual memory actions."""
+        if not self.embedding_enabled:
+            return False
+
+        # Lazily initialize embedding components if they haven't loaded yet
+        if self.embedding_client is None or self.embeddings_dir is None:
+            try:
+                self._init_embedding_components()
+            except Exception as e:
+                print(f"Error initializing embedding components on-demand: {e}")
+                return False
+
+        # Ensure chat id exists
+        if not self.current_chat_id:
+            from datetime import datetime
+
+            self.current_chat_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # Ensure per-chat vector store exists
+        if self.chat_vector_store is None and self.embeddings_dir is not None:
+            try:
+                embedding_store_path = (
+                    self.embeddings_dir / f"chat_{self.current_chat_id}.json"
+                )
+                self.chat_vector_store = ChatVectorStore(embedding_store_path)
+            except Exception as e:
+                print(f"Error creating chat vector store: {e}")
+                return False
+
+        return bool(self.embedding_client and self.chat_vector_store)
+
+    def on_remember_selected_text(self, text: str, role: str, message_index: int):
+        """User requested: remember selected text for semantic memory."""
+        clean_text = (text or "").replace("\u2029", "\n").strip()
+        if not clean_text:
+            return
+
+        if not self._ensure_semantic_memory_ready():
+            self.status_bar.showMessage(
+                "Semantic memory not ready. Enable RAG in Settings and ensure Ollama is running."
+            )
+            return
+
+        # If index is unknown, store with a safe monotonic index
+        safe_index = message_index if isinstance(message_index, int) and message_index >= 0 else len(self.conversation_history)
+        created_at = datetime.now().isoformat()
+        chat_id = self.current_chat_id
+        self._embed_message_async(
+            {
+                "role": role or "user",
+                "content": clean_text,
+                "source": "selection",
+                "created_at": created_at,
+                "chat_id": chat_id,
+            },
+            safe_index,
+        )
+        self.status_bar.showMessage("Remembered selection for semantic memory")
+
+    def on_remember_message(self, full_text: str, role: str, message_index: int):
+        """User requested: remember whole message for semantic memory."""
+        clean_text = (full_text or "").replace("\u2029", "\n").strip()
+        if not clean_text:
+            return
+
+        if not self._ensure_semantic_memory_ready():
+            self.status_bar.showMessage(
+                "Semantic memory not ready. Enable RAG in Settings and ensure Ollama is running."
+            )
+            return
+
+        safe_index = message_index if isinstance(message_index, int) and message_index >= 0 else len(self.conversation_history)
+        created_at = datetime.now().isoformat()
+        chat_id = self.current_chat_id
+        self._embed_message_async(
+            {
+                "role": role or "user",
+                "content": clean_text,
+                "source": "message",
+                "created_at": created_at,
+                "chat_id": chat_id,
+            },
+            safe_index,
+        )
+        self.status_bar.showMessage("Remembered message for semantic memory")
 
     def on_audio_prompt_sent(self, prompt: str):
         """Handle audio generation prompt."""

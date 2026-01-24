@@ -158,12 +158,13 @@ class OllamaDetector:
             print(f"Error getting model details for {model_name}: {e}")
             return None
 
-    def get_model_type(self, model_name: str) -> str:
+    def get_model_type(self, model_name: str, use_api: bool = False) -> str:
         """
         Determine model type (llm, vision, or embedding).
 
         Args:
             model_name: Name of the model
+            use_api: If True, use API to get model details (may load model). Default False to avoid loading models at startup.
 
         Returns:
             Model type: 'llm', 'vision', or 'embedding'
@@ -182,19 +183,18 @@ class OllamaDetector:
         ):
             return "vision"
 
-        # Try to get model details from API
-        details = self.get_model_details(model_name)
-        if details:
-            # Check capabilities field
-            capabilities = details.get("capabilities", [])
-            if "vision" in capabilities:
-                return "vision"
-            # If it has completion but not vision, it's likely an LLM
-            if "completion" in capabilities:
-                return "llm"
-
-            # Check if it's an embedding model by trying the embeddings endpoint
-            # (but we'll use name-based detection for speed)
+        # Only use API if explicitly requested (to avoid loading models at startup)
+        if use_api:
+            # Try to get model details from API
+            details = self.get_model_details(model_name)
+            if details:
+                # Check capabilities field
+                capabilities = details.get("capabilities", [])
+                if "vision" in capabilities:
+                    return "vision"
+                # If it has completion but not vision, it's likely an LLM
+                if "completion" in capabilities:
+                    return "llm"
 
         # Default to LLM if we can't determine
         return "llm"
@@ -213,7 +213,8 @@ class OllamaDetector:
         categorized = {"llm": [], "vision": [], "embedding": []}
 
         for model in all_models:
-            model_type = self.get_model_type(model)
+            # Use name-based detection only (no API calls to avoid loading models)
+            model_type = self.get_model_type(model, use_api=False)
             categorized[model_type].append(model)
 
         return categorized, None

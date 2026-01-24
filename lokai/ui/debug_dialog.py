@@ -20,11 +20,23 @@ from PySide6.QtGui import QFont
 class DebugDialog(QDialog):
     """Debug dialog showing current prompt details."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, preview_mode: bool = False):
+        """
+        Initialize DebugDialog.
+        
+        Args:
+            parent: Parent widget
+            preview_mode: If True, shows Send/Cancel buttons instead of Close (for preview before sending)
+        """
         super().__init__(parent)
-        self.setWindowTitle("Debug - Current Prompt")
+        self.preview_mode = preview_mode
+        if preview_mode:
+            self.setWindowTitle("Preview Prompt Before Sending")
+        else:
+            self.setWindowTitle("Debug - Current Prompt")
         self.setMinimumWidth(800)
         self.setMinimumHeight(600)
+        self.user_accepted = False  # True if user clicked Send in preview mode
         self.init_ui()
 
     def init_ui(self):
@@ -88,9 +100,32 @@ class DebugDialog(QDialog):
         copy_btn.clicked.connect(self.copy_to_clipboard)
         button_layout.addWidget(copy_btn)
 
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(self.accept)
-        button_layout.addWidget(close_btn)
+        if self.preview_mode:
+            # Preview mode: Send and Cancel buttons
+            cancel_btn = QPushButton("Cancel")
+            cancel_btn.clicked.connect(self.reject)
+            button_layout.addWidget(cancel_btn)
+            
+            send_btn = QPushButton("Send")
+            send_btn.setDefault(True)
+            send_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #4CAF50;
+                    color: white;
+                    font-weight: bold;
+                    padding: 8px 20px;
+                }
+                QPushButton:hover {
+                    background-color: #45a049;
+                }
+            """)
+            send_btn.clicked.connect(self._on_send_clicked)
+            button_layout.addWidget(send_btn)
+        else:
+            # Debug mode: Close button
+            close_btn = QPushButton("Close")
+            close_btn.clicked.connect(self.accept)
+            button_layout.addWidget(close_btn)
 
         layout.addLayout(button_layout)
         self.setLayout(layout)
@@ -149,6 +184,11 @@ class DebugDialog(QDialog):
         else:
             self.prompt_type_label.setStyleSheet("font-weight: bold; color: #4CAF50;")
 
+    def _on_send_clicked(self):
+        """Handle Send button in preview mode."""
+        self.user_accepted = True
+        self.accept()
+    
     def copy_to_clipboard(self):
         """Copy prompt to clipboard."""
         clipboard = self.prompt_text.toPlainText()

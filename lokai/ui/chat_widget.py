@@ -210,6 +210,29 @@ class ChatBubbleTextEdit(QTextEdit):
         # Otherwise, use default behavior (text selection)
         super().mousePressEvent(event)
 
+    def mouseDoubleClickEvent(self, event: QMouseEvent):
+        """Handle double-click to copy code block (like Ollama app)."""
+        # Check if parent ChatBubble has code blocks
+        parent_bubble = getattr(self, '_parent_bubble', None)
+        if not parent_bubble:
+            # Try to find parent
+            p = self.parent()
+            while p:
+                if hasattr(p, '_extract_code_blocks'):
+                    parent_bubble = p
+                    break
+                p = p.parent()
+        
+        if parent_bubble and hasattr(parent_bubble, '_extract_code_blocks'):
+            code_blocks = parent_bubble._extract_code_blocks()
+            if code_blocks:
+                parent_bubble._copy_code_block(code_blocks[0])
+                event.accept()
+                return
+        
+        # Default behavior
+        super().mouseDoubleClickEvent(event)
+
 
 class ChatBubble(QFrame):
     """Individual chat message bubble."""
@@ -219,6 +242,10 @@ class ChatBubble(QFrame):
     text_selected_for_image = Signal(str)
     text_selected_for_audio = Signal(str)
     image_selected_for_video = Signal(str)  # image_path
+    # Manual semantic memory (RAG) actions
+    remember_selected_text = Signal(str, str, int)  # text, role, message_index
+    remember_message = Signal(str, str, int)  # full_text, role, message_index
+    memory_stats_requested = Signal()
 
     def __init__(
         self,
@@ -226,6 +253,7 @@ class ChatBubble(QFrame):
         is_user: bool = True,
         image_path: str = None,
         audio_path: str = None,
+        message_index: int = -1,
         parent=None,
     ):
         """
@@ -243,8 +271,17 @@ class ChatBubble(QFrame):
         self.current_text = message
         self.image_path = image_path
         self.audio_path = audio_path
+        self.message_index = message_index
+        self.message_role = "user" if is_user else "assistant"
 
         self.init_ui()
+
+    def set_message_metadata(self, *, role: str = None, message_index: int = None):
+        """Attach metadata so context menu actions know what they refer to."""
+        if role is not None:
+            self.message_role = role
+        if message_index is not None:
+            self.message_index = message_index
 
     def init_ui(self):
         """Initialize UI."""
@@ -351,6 +388,8 @@ class ChatBubble(QFrame):
             self.label.customContextMenuRequested.connect(
                 self._show_bubble_context_menu
             )
+            # Store reference to bubble in label for code block detection
+            self.label._parent_bubble = self
             layout.addWidget(self.label)
 
         # Style based on user/AI
@@ -638,6 +677,46 @@ class ChatBubble(QFrame):
                 lambda: self.text_selected_for_audio.emit(selected_text)
             )
 
+        menu.addSeparator()
+
+        # Check if message contains code blocks
+        code_blocks = self._extract_code_blocks()
+        if code_blocks:
+            if len(code_blocks) == 1:
+                copy_code_action = menu.addAction("Copy code block")
+                copy_code_action.triggered.connect(
+                    lambda: self._copy_code_block(code_blocks[0])
+                )
+            else:
+                copy_code_action = menu.addAction(f"Copy code block ({len(code_blocks)} blocks)")
+                copy_code_action.triggered.connect(
+                    lambda: self._copy_code_block(code_blocks[0])  # Copy first block
+                )
+
+        # Manual semantic memory (RAG) actions
+        menu.addSeparator()
+        remember_selection_action = menu.addAction("Remember selection")
+        remember_selection_action.setEnabled(has_selection)
+        if has_selection:
+            remember_selection_action.triggered.connect(
+                lambda: self.remember_selected_text.emit(
+                    selected_text, self.message_role, self.message_index
+                )
+            )
+
+        remember_message_action = menu.addAction("Remember whole message")
+        full_plain_text = self.label.toPlainText() if hasattr(self, "label") and self.label else ""
+        remember_message_action.setEnabled(bool(full_plain_text and full_plain_text.strip()))
+        if full_plain_text and full_plain_text.strip():
+            remember_message_action.triggered.connect(
+                lambda: self.remember_message.emit(
+                    full_plain_text.strip(), self.message_role, self.message_index
+                )
+            )
+
+        memory_stats_action = menu.addAction("Memory stats")
+        memory_stats_action.triggered.connect(lambda: self.memory_stats_requested.emit())
+
         # Show menu at cursor position
         menu.exec(self.label.mapToGlobal(position))
 
@@ -665,6 +744,45 @@ class ChatBubble(QFrame):
                 clipboard.setText(text)
                 # Show feedback
                 self.label.setToolTip("All text copied to clipboard")
+
+    def _extract_code_blocks(self) -> list:
+        """
+        Extract all code blocks from message text.
+        
+        Returns:
+            List of code block content strings
+        """
+        if not hasattr(self, "label") or not self.label:
+            return []
+        
+        # Get original markdown text
+        full_text = self.current_text if hasattr(self, "current_text") else self.label.toPlainText()
+        if not full_text:
+            return []
+        
+        # Find all code blocks: ```language\ncode\n``` or ```\ncode\n```
+        pattern = r'```(?:\w+)?\n(.*?)```'
+        code_blocks = []
+        for match in re.finditer(pattern, full_text, re.DOTALL):
+            code_content = match.group(1).strip()
+            if code_content:
+                code_blocks.append(code_content)
+        
+        return code_blocks
+
+    def _copy_code_block(self, code_content: str):
+        """Copy code block content to clipboard."""
+        if not code_content:
+            return
+        
+        from PySide6.QtWidgets import QApplication
+        clipboard = QApplication.clipboard()
+        clipboard.setText(code_content)
+        
+        # Show brief feedback
+        if hasattr(self, "label") and self.label:
+            self.label.setToolTip("Code block copied to clipboard")
+            QTimer.singleShot(2000, lambda: self.label.setToolTip("") if hasattr(self, "label") and self.label else None)
 
     def _show_image_context_menu(self, position):
         """Show context menu for image (right-click)."""
@@ -802,6 +920,10 @@ class ChatWidget(QWidget):
     image_selected_for_video = Signal(
         str
     )  # Signal when image is selected for video generation
+    # Manual semantic memory (RAG)
+    remember_selected_text = Signal(str, str, int)  # text, role, message_index
+    remember_message = Signal(str, str, int)  # full_text, role, message_index
+    memory_stats_requested = Signal()
 
     def __init__(
         self, ollama_client: OllamaClient, config_manager: ConfigManager = None
@@ -1055,18 +1177,24 @@ class ChatWidget(QWidget):
         welcome.text_selected_for_tts.connect(self.text_selected_for_tts.emit)
         welcome.text_selected_for_image.connect(self.text_selected_for_image.emit)
         welcome.text_selected_for_audio.connect(self.text_selected_for_audio.emit)
+        welcome.memory_stats_requested.connect(self.memory_stats_requested.emit)
         self.messages_layout.addWidget(welcome)
         self.messages_layout.addStretch()
 
-    def add_user_message(self, message: str, image_path: str = None):
+    def add_user_message(self, message: str, image_path: str = None, message_index: int = -1):
         """Add user message to chat."""
         # If message is empty but image exists, show image-only message
         display_message = message if message else "📷 Image"
-        bubble = ChatBubble(display_message, is_user=True, image_path=image_path)
+        bubble = ChatBubble(
+            display_message, is_user=True, image_path=image_path, message_index=message_index
+        )
         # Connect bubble signals to widget signals
         bubble.text_selected_for_tts.connect(self.text_selected_for_tts.emit)
         bubble.text_selected_for_image.connect(self.text_selected_for_image.emit)
         bubble.text_selected_for_audio.connect(self.text_selected_for_audio.emit)
+        bubble.remember_selected_text.connect(self.remember_selected_text.emit)
+        bubble.remember_message.connect(self.remember_message.emit)
+        bubble.memory_stats_requested.connect(self.memory_stats_requested.emit)
         self.messages_layout.insertWidget(self.messages_layout.count() - 1, bubble)
         self.scroll_to_bottom()
 
@@ -1106,7 +1234,7 @@ class ChatWidget(QWidget):
                 self.typing_indicator = None
 
             # Create AI bubble
-            self.current_ai_bubble = ChatBubble("", is_user=False)
+            self.current_ai_bubble = ChatBubble("", is_user=False, message_index=-1)
             # Connect bubble signals to widget signals
             self.current_ai_bubble.text_selected_for_tts.connect(
                 self.text_selected_for_tts.emit
@@ -1116,6 +1244,13 @@ class ChatWidget(QWidget):
             )
             self.current_ai_bubble.text_selected_for_audio.connect(
                 self.text_selected_for_audio.emit
+            )
+            self.current_ai_bubble.remember_selected_text.connect(
+                self.remember_selected_text.emit
+            )
+            self.current_ai_bubble.remember_message.connect(self.remember_message.emit)
+            self.current_ai_bubble.memory_stats_requested.connect(
+                self.memory_stats_requested.emit
             )
             self.messages_layout.insertWidget(
                 self.messages_layout.count() - 1, self.current_ai_bubble
@@ -1138,6 +1273,15 @@ class ChatWidget(QWidget):
         self.status_indicator.setVisible(True)
         print(f"[UI] Status updated to: 🔧 {display_name}")
 
+    def set_current_ai_bubble_metadata(self, *, role: str, message_index: int):
+        """Attach metadata (role/index) to the currently streaming AI bubble."""
+        if self.current_ai_bubble is not None and hasattr(
+            self.current_ai_bubble, "set_message_metadata"
+        ):
+            self.current_ai_bubble.set_message_metadata(
+                role=role, message_index=message_index
+            )
+
     def finish_ai_message(self):
         """Finish current AI message."""
         # Remove typing indicator if still visible
@@ -1152,13 +1296,16 @@ class ChatWidget(QWidget):
         # Hide status indicator
         self.status_indicator.setVisible(False)
 
-    def add_assistant_message(self, message: str):
+    def add_assistant_message(self, message: str, message_index: int = -1):
         """Add complete assistant message (for loading saved chats)."""
-        bubble = ChatBubble(message, is_user=False)
+        bubble = ChatBubble(message, is_user=False, message_index=message_index)
         # Connect bubble signals to widget signals
         bubble.text_selected_for_tts.connect(self.text_selected_for_tts.emit)
         bubble.text_selected_for_image.connect(self.text_selected_for_image.emit)
         bubble.text_selected_for_audio.connect(self.text_selected_for_audio.emit)
+        bubble.remember_selected_text.connect(self.remember_selected_text.emit)
+        bubble.remember_message.connect(self.remember_message.emit)
+        bubble.memory_stats_requested.connect(self.memory_stats_requested.emit)
         self.messages_layout.insertWidget(self.messages_layout.count() - 1, bubble)
         self.scroll_to_bottom()
 
@@ -1840,6 +1987,9 @@ class ChatWidget(QWidget):
         bubble.text_selected_for_tts.connect(self.text_selected_for_tts.emit)
         bubble.text_selected_for_image.connect(self.text_selected_for_image.emit)
         bubble.text_selected_for_audio.connect(self.text_selected_for_audio.emit)
+        bubble.remember_selected_text.connect(self.remember_selected_text.emit)
+        bubble.remember_message.connect(self.remember_message.emit)
+        bubble.memory_stats_requested.connect(self.memory_stats_requested.emit)
         self.messages_layout.insertWidget(self.messages_layout.count() - 1, bubble)
         self.scroll_to_bottom()
 
@@ -2013,8 +2163,16 @@ class ChatWidget(QWidget):
     def _on_voice_transcription(self, text: str):
         """Handle voice transcription ready."""
         if text.strip():
-            # Insert transcription into input field
-            self.input_field.setPlainText(text.strip())
+            # Get current text from input field
+            current_text = self.input_field.toPlainText()
+            
+            # Add transcription to existing text (don't replace)
+            if current_text.strip():
+                # If there's existing text, add space and new transcription
+                self.input_field.setPlainText(f"{current_text} {text.strip()}")
+            else:
+                # If input is empty, just set the transcription
+                self.input_field.setPlainText(text.strip())
             
             # Focus input field so user can review/edit before sending
             self.input_field.setFocus()
