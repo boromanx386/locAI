@@ -58,7 +58,10 @@
     "steps": 50,
     "guidance_scale": 7.5,
     "auto_apply_presets": true,
-    "use_sequential_cpu_offload": true
+    "use_sequential_cpu_offload": true,
+    "img2img_strength": 0.75,
+    "img2img_steps": 30,
+    "clip_skip": null
   },
   "video_gen": {
     "storage_path": null,
@@ -93,7 +96,8 @@
       "negative_prompt": "blurry, low quality, distorted, ugly, bad anatomy, duplicate, multiple, two, double, repeated, extra",
       "info_url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0",
       "description": "Najbolji kvalitet, veća memorija (~6GB) - optimizovano",
-      "type": "xl"
+      "type": "xl",
+      "clip_skip": null
     },
     "stabilityai/stable-diffusion-2-1-base": {
       "name": "SD 2.1 Base",
@@ -104,7 +108,8 @@
       "negative_prompt": "blurry, low quality, distorted, ugly, bad anatomy, duplicate, multiple, two, double, repeated, extra",
       "info_url": "https://huggingface.co/stabilityai/stable-diffusion-2-1-base",
       "description": "Brži, manje memorije (~5GB)",
-      "type": "base"
+      "type": "base",
+      "clip_skip": null
     },
     "runwayml/stable-diffusion-v1-5": {
       "name": "SD 1.5",
@@ -115,7 +120,8 @@
       "negative_prompt": "blurry, low quality, distorted, ugly, bad anatomy, duplicate, multiple, two, double, repeated, extra",
       "info_url": "https://huggingface.co/runwayml/stable-diffusion-v1-5",
       "description": "Najbrži, najmanje memorije (~4GB)",
-      "type": "base"
+      "type": "base",
+      "clip_skip": null
     }
   },
   "rag": {
@@ -138,7 +144,10 @@
     "storage_path": null,
     "device": "cpu",
     "chunk_size_ms": 560,
-    "att_context_size": [70, 6],
+    "att_context_size": [
+      70,
+      6
+    ],
     "language": "en",
     "punctuation_capitalization": true,
     "microphone_device": null,
@@ -158,4 +167,3 @@
     }
   }
 }
-

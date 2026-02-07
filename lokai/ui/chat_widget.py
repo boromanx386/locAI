@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
 )
-from PySide6.QtCore import Signal, Qt, QTimer, QEvent, QSize
+from PySide6.QtCore import Signal, Qt, QTimer, QEvent, QSize, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import (
     QFont,
     QPixmap,
@@ -212,25 +212,7 @@ class ChatBubbleTextEdit(QTextEdit):
 
     def mouseDoubleClickEvent(self, event: QMouseEvent):
         """Handle double-click to copy code block (like Ollama app)."""
-        # Check if parent ChatBubble has code blocks
-        parent_bubble = getattr(self, '_parent_bubble', None)
-        if not parent_bubble:
-            # Try to find parent
-            p = self.parent()
-            while p:
-                if hasattr(p, '_extract_code_blocks'):
-                    parent_bubble = p
-                    break
-                p = p.parent()
-        
-        if parent_bubble and hasattr(parent_bubble, '_extract_code_blocks'):
-            code_blocks = parent_bubble._extract_code_blocks()
-            if code_blocks:
-                parent_bubble._copy_code_block(code_blocks[0])
-                event.accept()
-                return
-        
-        # Default behavior
+        # Default behavior (no special handling – right-click menu handles code copy)
         super().mouseDoubleClickEvent(event)
 
 
@@ -683,15 +665,21 @@ class ChatBubble(QFrame):
         code_blocks = self._extract_code_blocks()
         if code_blocks:
             if len(code_blocks) == 1:
+                # Single block – one flat action
+                block = code_blocks[0]
                 copy_code_action = menu.addAction("Copy code block")
                 copy_code_action.triggered.connect(
-                    lambda: self._copy_code_block(code_blocks[0])
+                    lambda _checked=False, b=block: self._copy_code_block(b["code"])
                 )
             else:
-                copy_code_action = menu.addAction(f"Copy code block ({len(code_blocks)} blocks)")
-                copy_code_action.triggered.connect(
-                    lambda: self._copy_code_block(code_blocks[0])  # Copy first block
-                )
+                # Multiple blocks – submenu with one action per block
+                copy_menu = menu.addMenu("Copy code block")
+                for idx, block in enumerate(code_blocks, start=1):
+                    lang = block["language"] or "code"
+                    action = copy_menu.addAction(f"Block {idx} ({lang})")
+                    action.triggered.connect(
+                        lambda _checked=False, b=block: self._copy_code_block(b["code"])
+                    )
 
         # Manual semantic memory (RAG) actions
         menu.addSeparator()
@@ -750,7 +738,7 @@ class ChatBubble(QFrame):
         Extract all code blocks from message text.
         
         Returns:
-            List of code block content strings
+            List of dicts with 'language' and 'code'
         """
         if not hasattr(self, "label") or not self.label:
             return []
@@ -761,12 +749,18 @@ class ChatBubble(QFrame):
             return []
         
         # Find all code blocks: ```language\ncode\n``` or ```\ncode\n```
-        pattern = r'```(?:\w+)?\n(.*?)```'
-        code_blocks = []
+        pattern = r'```(\w+)?\n(.*?)```'
+        code_blocks: list[dict] = []
         for match in re.finditer(pattern, full_text, re.DOTALL):
-            code_content = match.group(1).strip()
+            language = (match.group(1) or "").strip()
+            code_content = match.group(2).strip()
             if code_content:
-                code_blocks.append(code_content)
+                code_blocks.append(
+                    {
+                        "language": language,
+                        "code": code_content,
+                    }
+                )
         
         return code_blocks
 
@@ -905,7 +899,7 @@ class ChatWidget(QWidget):
     """Main chat widget with message display and input."""
 
     message_sent = Signal(str, str)  # Signal(message, image_path)
-    image_prompt_sent = Signal(str)  # Signal for image generation
+    image_prompt_sent = Signal(str, str)  # Signal(prompt, init_image_path)
     audio_prompt_sent = Signal(str)  # Signal for audio generation
     seed_lock_toggled = Signal(bool)  # Signal for seed lock toggle
     seed_increase_requested = Signal()  # Signal to increase seed
@@ -942,6 +936,11 @@ class ChatWidget(QWidget):
         self.image_mode = False  # Toggle for image generation mode
         self.audio_mode = False  # Toggle for audio generation mode
         self.seed_locked = False  # Seed lock state
+        
+        # Auto-stop timer for voice input (30 seconds)
+        self.voice_auto_stop_timer = QTimer()
+        self.voice_auto_stop_timer.setSingleShot(True)
+        self.voice_auto_stop_timer.timeout.connect(self._auto_stop_voice_input)
         self.typing_indicator = None  # Typing indicator widget
 
         # Image handling
@@ -1045,6 +1044,21 @@ class ChatWidget(QWidget):
             self.voice_btn, MaterialIcons.MIC_SVG, size=16, keep_text=False
         )
         self.voice_btn.clicked.connect(self.toggle_voice_input)
+        
+        # Add shadow effect for pulsing animation
+        self.voice_btn_shadow = QGraphicsDropShadowEffect()
+        self.voice_btn_shadow.setBlurRadius(10)
+        self.voice_btn_shadow.setXOffset(0)
+        self.voice_btn_shadow.setYOffset(0)
+        self.voice_btn_shadow.setColor(QColor(231, 76, 60, 0))  # Red, invisible when not active
+        self.voice_btn.setGraphicsEffect(self.voice_btn_shadow)
+        
+        # Simple pulsing animation - animate blur radius for visible pulsing effect
+        self.voice_btn_animation = QPropertyAnimation(self.voice_btn_shadow, b"blurRadius")
+        self.voice_btn_animation.setDuration(500)
+        self.voice_btn_animation.setEasingCurve(QEasingCurve.Type.InOutSine)
+        self.voice_btn_animation.setLoopCount(-1)
+        
         input_layout.addWidget(self.voice_btn)
 
         # Prompt template button
@@ -1859,7 +1873,7 @@ class ChatWidget(QWidget):
         if self.audio_mode:
             self.audio_prompt_sent.emit(message)
         elif self.image_mode:
-            self.image_prompt_sent.emit(message)
+            self.image_prompt_sent.emit(message, image_path or "")
         else:
             self.message_sent.emit(message, image_path or "")
 
@@ -2195,11 +2209,35 @@ class ChatWidget(QWidget):
         MaterialIcons.apply_to_button(
             self.voice_btn, MaterialIcons.MIC_OFF_SVG, size=16, keep_text=False
         )
+        # Set shadow to bright red (always red, regardless of mode)
+        self.voice_btn_shadow.setColor(QColor(255, 0, 0, 255))  # Bright red - full opacity
+        # Start pulsing animation - large range for maximum visibility
+        self.voice_btn_animation.setStartValue(15)
+        self.voice_btn_animation.setEndValue(35)
+        self.voice_btn_animation.start()
+        
+        # Start auto-stop timer (30 seconds)
+        self.voice_auto_stop_timer.start(30000)  # 30 seconds
 
     def _on_voice_stopped(self):
         """Handle voice input stopped."""
         print("Voice input stopped")
+        # Stop auto-stop timer if running
+        if self.voice_auto_stop_timer.isActive():
+            self.voice_auto_stop_timer.stop()
+        
         # Reset mic button to normal state
         MaterialIcons.apply_to_button(
             self.voice_btn, MaterialIcons.MIC_SVG, size=16, keep_text=False
         )
+        # Stop pulsing animation
+        self.voice_btn_animation.stop()
+        self.voice_btn_shadow.setBlurRadius(10)
+        self.voice_btn_shadow.setColor(QColor(231, 76, 60, 0))  # Reset to invisible
+    
+    def _auto_stop_voice_input(self):
+        """Automatically stop voice input after 30 seconds."""
+        if self.voice_input_widget and hasattr(self.voice_input_widget, 'is_listening'):
+            if self.voice_input_widget.is_listening:
+                print("Auto-stopping voice input after 30 seconds")
+                self.voice_input_widget.stop_voice_input()

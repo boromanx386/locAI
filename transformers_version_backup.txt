@@ -1,0 +1,8 @@
+# Transformers Version Backup
+# Created: 2026-01-23 11:37:34
+# Version: 4.53.3
+
+# Da vratiš ovu verziju, pokreni:
+# pip install transformers==4.53.3
+
+transformers==4.53.3

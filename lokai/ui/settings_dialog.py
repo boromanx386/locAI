@@ -25,16 +25,22 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QListWidget,
     QListWidgetItem,
+    QScrollArea,
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QDesktopServices
 from lokai.core.config_manager import ConfigManager
 from lokai.utils.model_manager import ModelManager
 from lokai.ui.material_icons import MaterialIcons
+from lokai.core.ollama_detector import OllamaDetector
 
 
 class SettingsDialog(QDialog):
     """Settings dialog with tabbed interface."""
+    
+    # Class-level cache for embedding models (loaded once per app session)
+    _embedding_models_cache = None
+    _embedding_models_loaded = False
 
     def __init__(self, config_manager: ConfigManager, parent=None):
         """
@@ -47,7 +53,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.config_manager = config_manager
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(600)
+        self.setMinimumWidth(820)
         self.setMinimumHeight(500)
 
         self.init_ui()
@@ -282,9 +288,15 @@ class SettingsDialog(QDialog):
 
     def create_image_gen_tab(self) -> QWidget:
         """Create Image Generation settings tab."""
-        widget = QWidget()
-        layout = QVBoxLayout()
-        layout.setSpacing(12)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setSpacing(14)
+        content.setMinimumHeight(560)
 
         # Model Storage section (moved from Models tab)
         models_group = QGroupBox("Model Storage")
@@ -310,6 +322,7 @@ class SettingsDialog(QDialog):
 
         image_group = QGroupBox("Image Generation Settings")
         image_layout = QFormLayout()
+        image_layout.setVerticalSpacing(8)
 
         self.image_enabled_check = QCheckBox("Enable Image Generation")
         image_layout.addRow("", self.image_enabled_check)
@@ -425,7 +438,7 @@ class SettingsDialog(QDialog):
         image_layout.addRow("Height:", self.image_height_spin)
 
         self.image_steps_spin = QSpinBox()
-        self.image_steps_spin.setRange(10, 100)
+        self.image_steps_spin.setRange(1, 150)
         self.image_steps_spin.setValue(50)
         image_layout.addRow("Steps:", self.image_steps_spin)
 
@@ -436,8 +449,27 @@ class SettingsDialog(QDialog):
         self.image_guidance_spin.setDecimals(1)
         image_layout.addRow("Guidance Scale:", self.image_guidance_spin)
 
+        self.img2img_strength_spin = QDoubleSpinBox()
+        self.img2img_strength_spin.setRange(0.2, 1.0)
+        self.img2img_strength_spin.setValue(0.75)
+        self.img2img_strength_spin.setSingleStep(0.05)
+        self.img2img_strength_spin.setDecimals(2)
+        self.img2img_strength_spin.setToolTip(
+            "Img2img: How much to change the image (0.3-0.5 subtle, 0.7-0.9 strong)"
+        )
+        image_layout.addRow("Img2img Strength:", self.img2img_strength_spin)
+
+        self.img2img_steps_spin = QSpinBox()
+        self.img2img_steps_spin.setRange(5, 100)
+        self.img2img_steps_spin.setValue(30)
+        self.img2img_steps_spin.setToolTip(
+            "Img2img: Number of inference steps (fewer than txt2img typical)"
+        )
+        image_layout.addRow("Img2img Steps:", self.img2img_steps_spin)
+
         self.negative_prompt_edit = QTextEdit()
-        self.negative_prompt_edit.setMaximumHeight(60)
+        self.negative_prompt_edit.setMinimumHeight(52)
+        self.negative_prompt_edit.setMaximumHeight(80)
         self.negative_prompt_edit.setPlaceholderText(
             "blurry, low quality, distorted, ugly..."
         )
@@ -495,8 +527,13 @@ class SettingsDialog(QDialog):
         self.image_model_combo.currentTextChanged.connect(self.on_model_changed)
 
         layout.addStretch()
-        widget.setLayout(layout)
-        return widget
+        scroll.setWidget(content)
+
+        wrapper = QWidget()
+        wrapper_layout = QVBoxLayout(wrapper)
+        wrapper_layout.setContentsMargins(0, 0, 0, 0)
+        wrapper_layout.addWidget(scroll)
+        return wrapper
 
     def create_video_gen_tab(self) -> QWidget:
         """Create Video Generation settings tab."""
@@ -626,7 +663,7 @@ class SettingsDialog(QDialog):
 
         # Inference steps
         self.video_steps_spin = QSpinBox()
-        self.video_steps_spin.setRange(10, 100)
+        self.video_steps_spin.setRange(1, 150)
         self.video_steps_spin.setValue(25)
         self.video_steps_spin.setToolTip(
             "Number of inference steps. More steps = better quality but slower. "
@@ -1088,17 +1125,15 @@ class SettingsDialog(QDialog):
 
         # Embedding model selection
         self.embedding_model_combo = QComboBox()
-        self.embedding_model_combo.addItems(
-            [
-                "nomic-embed-text:v1.5",
-                "nomic-embed-text",
-                "all-minilm",
-                "mxbai-embed-large",
-            ]
-        )
+        self.embedding_model_combo.setEditable(True)  # Allow custom model names
         self.embedding_model_combo.setToolTip(
-            "Embedding model for semantic search. Smaller models use less memory."
+            "Embedding model for semantic search. Smaller models use less memory.\n"
+            "Shows only installed embedding models. You can also type a custom model name."
         )
+        
+        # Load installed embedding models from Ollama
+        self._load_embedding_models()
+        
         rag_layout.addRow("Embedding Model:", self.embedding_model_combo)
 
         # Force CPU checkbox
@@ -1181,6 +1216,59 @@ class SettingsDialog(QDialog):
         layout.addStretch()
         widget.setLayout(layout)
         return widget
+
+    def _load_embedding_models(self):
+        """Load installed embedding models from Ollama and populate combo box.
+        Uses class-level cache to load only once per app session."""
+        # Use cached list if already loaded
+        if SettingsDialog._embedding_models_loaded and SettingsDialog._embedding_models_cache is not None:
+            self.embedding_model_combo.clear()
+            self.embedding_model_combo.addItems(SettingsDialog._embedding_models_cache)
+            return
+        
+        # Load from Ollama (only once)
+        try:
+            detector = OllamaDetector()
+            embedding_models, error = detector.get_embedding_models()
+            
+            if error:
+                print(f"Warning: Could not load embedding models: {error}")
+                # Fallback to default list if detection fails
+                embedding_models = [
+                    "nomic-embed-text:v1.5",
+                    "nomic-embed-text",
+                    "all-minilm",
+                    "mxbai-embed-large",
+                ]
+            elif not embedding_models:
+                # If no embedding models found, add default suggestions
+                embedding_models = [
+                    "nomic-embed-text:v1.5",
+                    "nomic-embed-text",
+                ]
+            
+            # Cache the result
+            SettingsDialog._embedding_models_cache = embedding_models
+            SettingsDialog._embedding_models_loaded = True
+            
+            # Clear and populate combo box
+            self.embedding_model_combo.clear()
+            self.embedding_model_combo.addItems(embedding_models)
+            
+            print(f"Loaded {len(embedding_models)} embedding models: {embedding_models}")
+        except Exception as e:
+            print(f"Error loading embedding models: {e}")
+            # Fallback to default list on error
+            fallback_models = [
+                "nomic-embed-text:v1.5",
+                "nomic-embed-text",
+                "all-minilm",
+                "mxbai-embed-large",
+            ]
+            SettingsDialog._embedding_models_cache = fallback_models
+            SettingsDialog._embedding_models_loaded = True
+            self.embedding_model_combo.clear()
+            self.embedding_model_combo.addItems(fallback_models)
 
     def create_prompts_tab(self) -> QWidget:
         """Create Prompts management tab."""
@@ -2328,13 +2416,15 @@ class SettingsDialog(QDialog):
         embedding_model = self.config_manager.get(
             "rag.embedding_model", "nomic-embed-text:v1.5"
         )
-        index = self.embedding_model_combo.findText(embedding_model)
-        if index >= 0:
-            self.embedding_model_combo.setCurrentIndex(index)
-        else:
-            # If model not in list, add it
-            self.embedding_model_combo.addItem(embedding_model)
-            self.embedding_model_combo.setCurrentText(embedding_model)
+        # For editable combo, we can just set the text directly
+        # It will add to list if not present, or select existing item
+        if hasattr(self, "embedding_model_combo"):
+            index = self.embedding_model_combo.findText(embedding_model)
+            if index >= 0:
+                self.embedding_model_combo.setCurrentIndex(index)
+            else:
+                # If model not in list, set it as current text (editable combo will handle it)
+                self.embedding_model_combo.setCurrentText(embedding_model)
 
         rag_force_cpu = self.config_manager.get("rag.force_cpu", True)
         self.rag_force_cpu_check.setChecked(rag_force_cpu)
@@ -2412,6 +2502,11 @@ class SettingsDialog(QDialog):
 
         image_guidance = self.config_manager.get("image_gen.guidance_scale", 7.5)
         self.image_guidance_spin.setValue(float(image_guidance))
+
+        img2img_strength = self.config_manager.get("image_gen.img2img_strength", 0.75)
+        self.img2img_strength_spin.setValue(float(img2img_strength))
+        img2img_steps = self.config_manager.get("image_gen.img2img_steps", 30)
+        self.img2img_steps_spin.setValue(img2img_steps)
 
         negative_prompt = self.config_manager.get("image_gen.negative_prompt", "")
         self.negative_prompt_edit.setPlainText(negative_prompt)
@@ -2779,6 +2874,12 @@ class SettingsDialog(QDialog):
         self.config_manager.set("image_gen.steps", self.image_steps_spin.value())
         guidance = self.image_guidance_spin.value()
         self.config_manager.set("image_gen.guidance_scale", guidance)
+        self.config_manager.set(
+            "image_gen.img2img_strength", self.img2img_strength_spin.value()
+        )
+        self.config_manager.set(
+            "image_gen.img2img_steps", self.img2img_steps_spin.value()
+        )
         self.config_manager.set(
             "image_gen.negative_prompt", self.negative_prompt_edit.toPlainText()
         )
