@@ -1,0 +1,3 @@
+# Conda configuration for this project
+# Disable automatic base environment activation
+auto_activate_base: false

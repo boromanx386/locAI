@@ -11,7 +11,11 @@ from PIL import Image
 # Optional imports - only load if available
 try:
     import torch
-    from diffusers import StableDiffusionXLPipeline
+    from diffusers import (
+        StableDiffusionXLPipeline,
+        StableDiffusionXLImg2ImgPipeline,
+        StableDiffusionImg2ImgPipeline,
+    )
 
     DIFFUSERS_AVAILABLE = True
 except ImportError:
@@ -38,6 +42,7 @@ class ImageGenerator:
             else "cpu" if DIFFUSERS_AVAILABLE else None
         )
         self.active_loras = []  # Track loaded LoRAs
+        self._img2img_pipeline = None  # Cached img2img pipeline (reuses components)
 
         # Setup environment if path provided
         if storage_path:
@@ -204,6 +209,7 @@ class ImageGenerator:
                 self.pipeline = self.pipeline.to(self.device)
 
             self.current_model = model_name
+            self._img2img_pipeline = None  # Invalidate cached img2img pipeline
             print(f"Model {model_name} loaded successfully")
         except Exception as e:
             print(f"Error loading model: {e}")
@@ -300,6 +306,107 @@ class ImageGenerator:
             print(f"Error generating image: {e}")
             return None
 
+    def generate_image_img2img(
+        self,
+        init_image: Image.Image,
+        prompt: str,
+        negative_prompt: str = "",
+        strength: float = 0.75,
+        steps: int = 50,
+        guidance_scale: float = 7.5,
+        seed: Optional[int] = None,
+        callback: Optional[callable] = None,
+    ) -> Optional[Image.Image]:
+        """
+        Generate image from init image + prompt (image-to-image).
+
+        Args:
+            init_image: PIL Image to use as base
+            prompt: Text prompt for modifications
+            negative_prompt: Negative prompt
+            strength: How much to change the image (0.3-0.5 = subtle, 0.7-0.9 = strong)
+            steps: Number of inference steps
+            guidance_scale: Guidance scale
+            seed: Random seed
+            callback: Optional progress callback
+
+        Returns:
+            Generated PIL Image or None on error
+        """
+        if not self.is_available():
+            raise RuntimeError("Image generation not available")
+
+        if self.pipeline is None:
+            try:
+                self.load_model()
+            except Exception as e:
+                print(f"Cannot load model: {e}")
+                return None
+
+        # Ensure init_image is RGB
+        if init_image.mode != "RGB":
+            init_image = init_image.convert("RGB")
+
+        # Build or reuse img2img pipeline from existing components
+        if self._img2img_pipeline is None:
+            if hasattr(self.pipeline, "text_encoder_2"):
+                self._img2img_pipeline = StableDiffusionXLImg2ImgPipeline(
+                    vae=self.pipeline.vae,
+                    text_encoder=self.pipeline.text_encoder,
+                    text_encoder_2=self.pipeline.text_encoder_2,
+                    tokenizer=self.pipeline.tokenizer,
+                    tokenizer_2=self.pipeline.tokenizer_2,
+                    unet=self.pipeline.unet,
+                    scheduler=self.pipeline.scheduler,
+                )
+            else:
+                self._img2img_pipeline = StableDiffusionImg2ImgPipeline(
+                    vae=self.pipeline.vae,
+                    text_encoder=self.pipeline.text_encoder,
+                    tokenizer=self.pipeline.tokenizer,
+                    unet=self.pipeline.unet,
+                    scheduler=self.pipeline.scheduler,
+                )
+            if self.device == "cuda":
+                try:
+                    if hasattr(self.pipeline, "_sequential_cpu_offload_enabled"):
+                        if getattr(
+                            self.pipeline, "_sequential_cpu_offload_enabled", False
+                        ):
+                            self._img2img_pipeline.enable_sequential_cpu_offload()
+                    else:
+                        self._img2img_pipeline = self._img2img_pipeline.to(
+                            self.device
+                        )
+                except Exception as e:
+                    print(f"Warning: img2img device setup: {e}")
+
+        pipe = self._img2img_pipeline
+
+        try:
+            generator = None
+            if seed is not None:
+                gen_device = "cuda" if self.device == "cuda" else "cpu"
+                generator = torch.Generator(device=gen_device).manual_seed(seed)
+
+            pipeline_kwargs = {
+                "prompt": prompt,
+                "image": init_image,
+                "negative_prompt": negative_prompt if negative_prompt else None,
+                "strength": strength,
+                "num_inference_steps": steps,
+                "guidance_scale": guidance_scale,
+                "generator": generator,
+            }
+            if callback:
+                pipeline_kwargs["callback_on_step_end"] = callback
+
+            image = pipe(**pipeline_kwargs).images[0]
+            return image
+        except Exception as e:
+            print(f"Error in img2img: {e}")
+            return None
+
     def unload_model(self):
         """Unload current model to free memory."""
         if self.pipeline is not None:
@@ -341,6 +448,7 @@ class ImageGenerator:
             del self.pipeline
             self.pipeline = None
             self.current_model = None
+            self._img2img_pipeline = None
 
             # Clear LoRAs when model is unloaded
             self.active_loras = []

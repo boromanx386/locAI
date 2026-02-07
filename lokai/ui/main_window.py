@@ -578,7 +578,8 @@ class MainWindow(QMainWindow):
             
             # Preload ASR model by starting and stopping voice input
             # This loads the model in background, avoiding 10-15 second delay on first use
-            QTimer.singleShot(1000, self._preload_asr_by_start_stop)
+            # Start immediately with minimal delay to ensure chat_widget is ready
+            QTimer.singleShot(100, self._preload_asr_by_start_stop)
 
         except Exception as e:
             print(f"Error initializing ASR engine: {e}")
@@ -591,15 +592,21 @@ class MainWindow(QMainWindow):
         try:
             # Check if voice input widget is available
             if not hasattr(self, 'chat_widget') or self.chat_widget is None:
+                # Retry after short delay if chat_widget not ready yet
+                QTimer.singleShot(200, self._preload_asr_by_start_stop)
                 return
             
             if not hasattr(self.chat_widget, 'voice_input_widget') or self.chat_widget.voice_input_widget is None:
+                # Retry after short delay if voice_input_widget not ready yet
+                QTimer.singleShot(200, self._preload_asr_by_start_stop)
                 return
             
             voice_widget = self.chat_widget.voice_input_widget
             
             # Check if asr_worker is available
             if not hasattr(voice_widget, 'asr_worker') or voice_widget.asr_worker is None:
+                # Retry after short delay if asr_worker not ready yet
+                QTimer.singleShot(200, self._preload_asr_by_start_stop)
                 return
             
             # Connect to listening_started signal to know when model is loaded
@@ -619,6 +626,8 @@ class MainWindow(QMainWindow):
             
         except Exception as e:
             print(f"[ASR Preload] Error preloading ASR: {e}")
+            # Retry once more after delay
+            QTimer.singleShot(500, self._preload_asr_by_start_stop)
     
     def _stop_voice_input_for_preload(self, voice_widget):
         """Stop voice input after preload."""
@@ -933,6 +942,14 @@ class MainWindow(QMainWindow):
         """Stop all running operations (Ollama and Image Generation)."""
         stopped_anything = False
 
+        # Cancel all active Ollama requests first (stops streaming immediately)
+        if hasattr(self, "ollama_client") and self.ollama_client:
+            print("Cancelling all active Ollama requests...")
+            try:
+                self.ollama_client.cancel_all_requests()
+            except Exception as e:
+                print(f"Error cancelling requests: {e}")
+
         # Stop Ollama worker if running
         if hasattr(self, "current_worker") and self.current_worker is not None:
             if self.current_worker.isRunning():
@@ -966,24 +983,23 @@ class MainWindow(QMainWindow):
                 self.current_image_worker = None
                 stopped_anything = True
 
-        # Always reset context and conversation state when stopping
-        # This ensures next prompt starts fresh
+        # Stop model and clear GPU memory, but KEEP chat context
+        # (like Ollama app - you can continue the conversation after stopping)
         if stopped_anything:
-            print("Resetting conversation context...")
-            # Clear context to force fresh start
-            self.current_context = None
-            # Remove last incomplete message from history if exists
-            if (
-                self.conversation_history
-                and self.conversation_history[-1].get("role") == "user"
-            ):
-                # Remove last user message if assistant didn't respond
-                self.conversation_history.pop()
+            # Keep model tracking to know which model to stop
+            model_to_stop = self.last_used_model
+            # Note: We keep self.current_context and conversation_history intact
+            # so user can continue the conversation after stopping
 
-            # Reset model tracking
-            self.last_used_model = None
-            self.last_was_vision = False
+            # Stop the model using Ollama stop command (like Ollama app does)
+            if model_to_stop and hasattr(self, "ollama_client") and self.ollama_client:
+                print(f"Stopping model {model_to_stop}...")
+                try:
+                    self.ollama_client.stop_model(model_to_stop)
+                except Exception as e:
+                    print(f"Error stopping model: {e}")
 
+            # Also unload all models to ensure GPU memory is cleared
             print("Unloading all models...")
             if hasattr(self, "ollama_client") and self.ollama_client:
                 try:
@@ -997,14 +1013,43 @@ class MainWindow(QMainWindow):
                 except Exception as e:
                     print(f"Error unloading image generator: {e}")
 
+            # Force GPU memory cleanup
+            print("Clearing GPU memory...")
+            try:
+                from lokai.utils.clear_gpu_memory import clear_gpu_memory
+                clear_gpu_memory()
+            except Exception as e:
+                print(f"Error clearing GPU memory: {e}")
+
             self.status_bar.showMessage(
-                "All operations stopped, context reset, and models unloaded"
+                "Model stopped and GPU memory cleared. Chat context preserved - you can continue the conversation."
             )
             # Re-enable send button
             self.chat_widget.set_send_enabled(True)
         else:
-            self.status_bar.showMessage("No operations to stop")
-            # Ensure send button is enabled
+            # No worker was running - still clear GPU RAM (ollama stop + unload + clear)
+            model_to_stop = getattr(self, "last_used_model", None)
+            if model_to_stop and hasattr(self, "ollama_client") and self.ollama_client:
+                try:
+                    self.ollama_client.stop_model(model_to_stop)
+                except Exception as e:
+                    print(f"Error stopping model: {e}")
+            if hasattr(self, "ollama_client") and self.ollama_client:
+                try:
+                    self.ollama_client.unload_all_models_silent()
+                except Exception as e:
+                    print(f"Error unloading Ollama models: {e}")
+            if hasattr(self, "image_generator") and self.image_generator:
+                try:
+                    self.image_generator.unload_model()
+                except Exception as e:
+                    print(f"Error unloading image generator: {e}")
+            try:
+                from lokai.utils.clear_gpu_memory import clear_gpu_memory
+                clear_gpu_memory()
+            except Exception as e:
+                print(f"Error clearing GPU memory: {e}")
+            self.status_bar.showMessage("GPU memory cleared")
             self.chat_widget.set_send_enabled(True)
 
     def on_message_sent(self, message: str, image_path: str = ""):
@@ -2369,7 +2414,7 @@ class MainWindow(QMainWindow):
             if index >= 0:
                 self.status_panel.tts_voice_combo.setCurrentIndex(index)
 
-    def on_image_prompt_sent(self, prompt: str):
+    def on_image_prompt_sent(self, prompt: str, init_image_path: str = ""):
         """Handle image generation prompt."""
         if not self.image_generator:
             QMessageBox.warning(
@@ -2387,7 +2432,12 @@ class MainWindow(QMainWindow):
         self.ollama_client.unload_all_models_silent()
 
         # Add user message showing the prompt
-        self.chat_widget.add_user_message(f"Generate image: {prompt}")
+        user_msg = (
+            f"Image to image: {prompt}"
+            if init_image_path
+            else f"Generate image: {prompt}"
+        )
+        self.chat_widget.add_user_message(user_msg)
 
         # Determine seed to use
         import random
@@ -2412,7 +2462,11 @@ class MainWindow(QMainWindow):
 
         # Start image generation in background thread
         worker = ImageGenerationWorker(
-            self.image_generator, prompt, self.config_manager, seed=seed_to_use
+            self.image_generator,
+            prompt,
+            self.config_manager,
+            seed=seed_to_use,
+            init_image_path=init_image_path or None,
         )
         worker.image_generated.connect(self._on_image_generated)
         worker.error_occurred.connect(self._on_image_error)
@@ -3037,6 +3091,8 @@ class OllamaWorker(QThread):
         self.llm_params = llm_params or {}
         self.images = images  # List of base64-encoded images for vision models
         self.tools = tools  # Optional list of tools for function calling
+        import uuid
+        self.request_id = str(uuid.uuid4())  # Unique request ID for cancellation
 
     def run(self):
         """Run in background thread."""
@@ -3068,6 +3124,7 @@ class OllamaWorker(QThread):
                 repeat_penalty=self.llm_params.get("repeat_penalty"),
                 num_predict=self.llm_params.get("num_predict"),
                 tools=self.tools,
+                request_id=self.request_id,
             )
 
             # Check if response is an error message
@@ -3108,6 +3165,8 @@ class ChatToolsWorker(QThread):
         self.tools = tools
         self.llm_params = llm_params or {}
         self.max_iterations = 50 # Max tool call iterations to avoid loops
+        import uuid
+        self.request_id = str(uuid.uuid4())  # Unique request ID for cancellation
         
     def run(self):
         """Run in background thread - handle tool calls automatically."""
@@ -3137,6 +3196,7 @@ class ChatToolsWorker(QThread):
                     seed=self.llm_params.get("seed"),
                     stream=True,
                     callback=on_chunk,
+                    request_id=self.request_id,
                 )
                 
                 if "error" in result:

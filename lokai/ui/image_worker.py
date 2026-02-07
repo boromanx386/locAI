@@ -3,10 +3,13 @@ Image Generation Worker for locAI.
 Background thread for generating images without blocking UI.
 """
 
+from typing import Optional
+
 from PySide6.QtCore import QThread, Signal
+from PIL import Image
+
 from lokai.core.image_generator import ImageGenerator
 from lokai.core.config_manager import ConfigManager
-import tempfile
 from pathlib import Path
 
 
@@ -23,6 +26,7 @@ class ImageGenerationWorker(QThread):
         prompt: str,
         config_manager: ConfigManager,
         seed: int = None,
+        init_image_path: Optional[str] = None,
     ):
         """
         Initialize ImageGenerationWorker.
@@ -32,12 +36,14 @@ class ImageGenerationWorker(QThread):
             prompt: Image generation prompt
             config_manager: ConfigManager for settings
             seed: Random seed for image generation (None = random)
+            init_image_path: Optional path to init image for img2img
         """
         super().__init__()
         self.image_generator = image_generator
         self.prompt = prompt
         self.config_manager = config_manager
         self.seed = seed
+        self.init_image_path = init_image_path
 
     def run(self):
         """Run image generation in background thread."""
@@ -127,40 +133,51 @@ class ImageGenerationWorker(QThread):
                 if self.image_generator.active_loras:
                     self.image_generator.unload_all_loras()
 
-            # Progress callback using callback_on_step_end signature
-            # Signature: (pipe, step_index, timestep, callback_kwargs)
-            # Must return callback_kwargs (or modified version)
-            # step_index is 0-based, so step_index=0 is first step, step_index=steps-1 is last step
-            def progress_callback(pipe, step_index, timestep, callback_kwargs):
-                try:
-                    # Calculate progress: 30% (loading) + 60% (generation) = 90%
-                    # step_index is 0-based, so we add 1 to get current step (1 to steps)
-                    if steps > 0 and step_index is not None:
-                        # step_index goes from 0 to steps-1, so (step_index + 1) / steps gives progress
-                        current_step = step_index + 1
-                        progress = 30 + int((current_step / steps) * 60)
-                        # Clamp to 90% max (remaining 10% for saving)
-                        progress = min(progress, 90)
-                        self.progress_updated.emit(progress)
-                except Exception as e:
-                    # Ignore callback errors
-                    pass
+            def make_progress_callback(steps_used):
+                def progress_callback(pipe, step_index, timestep, callback_kwargs):
+                    try:
+                        if steps_used > 0 and step_index is not None:
+                            current_step = step_index + 1
+                            progress = 30 + int((current_step / steps_used) * 60)
+                            progress = min(progress, 90)
+                            self.progress_updated.emit(progress)
+                    except Exception:
+                        pass
+                    return callback_kwargs if callback_kwargs is not None else {}
 
-                # Must return callback_kwargs (or modified version)
-                return callback_kwargs if callback_kwargs is not None else {}
+                return progress_callback
 
             # Generate image (start at 30% since model is loaded)
             self.progress_updated.emit(30)
-            image = self.image_generator.generate_image(
-                prompt=self.prompt,
-                negative_prompt=negative_prompt,
-                width=width,
-                height=height,
-                steps=steps,
-                guidance_scale=guidance_scale,
-                seed=self.seed,
-                callback=progress_callback,
-            )
+            if self.init_image_path and Path(self.init_image_path).exists():
+                init_img = Image.open(self.init_image_path)
+                strength = self.config_manager.get(
+                    "image_gen.img2img_strength", 0.75
+                )
+                img2img_steps = self.config_manager.get(
+                    "image_gen.img2img_steps", 30
+                )
+                image = self.image_generator.generate_image_img2img(
+                    init_image=init_img,
+                    prompt=self.prompt,
+                    negative_prompt=negative_prompt,
+                    strength=strength,
+                    steps=img2img_steps,
+                    guidance_scale=guidance_scale,
+                    seed=self.seed,
+                    callback=make_progress_callback(img2img_steps),
+                )
+            else:
+                image = self.image_generator.generate_image(
+                    prompt=self.prompt,
+                    negative_prompt=negative_prompt,
+                    width=width,
+                    height=height,
+                    steps=steps,
+                    guidance_scale=guidance_scale,
+                    seed=self.seed,
+                    callback=make_progress_callback(steps),
+                )
 
             if image is None:
                 self.error_occurred.emit("Failed to generate image")

@@ -6,6 +6,7 @@ Handles API communication with Ollama server for LLM interactions.
 import json
 import requests
 from typing import Optional, Callable, List, Tuple
+import threading
 
 
 class OllamaClient:
@@ -21,6 +22,8 @@ class OllamaClient:
         self.base_url = base_url
         self.session = requests.Session()
         self.timeout = 7200  # 2 hours for long generations
+        self._active_requests = {}  # Track active streaming requests for cancellation
+        self._request_lock = threading.Lock()  # Lock for thread-safe request tracking
 
     def is_running(self) -> bool:
         """
@@ -66,6 +69,7 @@ class OllamaClient:
         num_predict: Optional[int] = None,
         seed: Optional[int] = None,
         tools: Optional[List[dict]] = None,
+        request_id: Optional[str] = None,
     ) -> Tuple[str, Optional[List[int]]]:
         """
         Generate response from model with streaming support.
@@ -84,10 +88,20 @@ class OllamaClient:
             num_predict: Maximum tokens to generate, -1 for unlimited (optional)
             seed: Seed for reproducibility, -1 for random (optional)
             tools: Optional list of tools for function calling (optional)
+            request_id: Optional request ID for cancellation tracking
 
         Returns:
             Tuple of (full_response, new_context)
         """
+        # Generate request ID if not provided
+        if request_id is None:
+            import uuid
+            request_id = str(uuid.uuid4())
+        
+        # Track this request
+        with self._request_lock:
+            self._active_requests[request_id] = {"cancelled": False, "response": None}
+        
         try:
             payload = {
                 "model": model,
@@ -137,12 +151,24 @@ class OllamaClient:
                 stream=True,
                 timeout=self.timeout,
             )
+            
+            # Store response for cancellation
+            with self._request_lock:
+                if request_id in self._active_requests:
+                    self._active_requests[request_id]["response"] = response
 
             if response.status_code == 200:
                 full_response = ""
                 new_context = None
 
                 for line in response.iter_lines():
+                    # Check for cancellation
+                    with self._request_lock:
+                        if request_id in self._active_requests and self._active_requests[request_id]["cancelled"]:
+                            print(f"Request {request_id} cancelled, closing stream...")
+                            response.close()
+                            return "", None
+                    
                     if line:
                         try:
                             data = json.loads(line.decode("utf-8"))
@@ -224,6 +250,11 @@ class OllamaClient:
             error_msg = f"Unexpected error: {str(e)}"
             print(f"Ollama client error: {error_msg}")
             return f"Error: {error_msg}", None
+        finally:
+            # Clean up request tracking
+            with self._request_lock:
+                if request_id in self._active_requests:
+                    del self._active_requests[request_id]
 
     def generate_response(
         self,
@@ -298,6 +329,7 @@ class OllamaClient:
         seed: Optional[int] = None,
         stream: bool = False,
         callback: Optional[Callable[[str], None]] = None,
+        request_id: Optional[str] = None,
     ) -> dict:
         """
         Chat API endpoint koji bolje podržava tools/function calling.
@@ -315,10 +347,20 @@ class OllamaClient:
             seed: Seed for reproducibility (optional)
             stream: Enable streaming (optional)
             callback: Callback for streaming chunks (optional)
+            request_id: Optional request ID for cancellation tracking
             
         Returns:
             Dict with response message and tool_calls if any
         """
+        # Generate request ID if not provided
+        if request_id is None:
+            import uuid
+            request_id = str(uuid.uuid4())
+        
+        # Track this request
+        with self._request_lock:
+            self._active_requests[request_id] = {"cancelled": False, "response": None}
+        
         try:
             payload = {
                 "model": model,
@@ -357,6 +399,11 @@ class OllamaClient:
                 timeout=self.timeout,
             )
             
+            # Store response for cancellation
+            with self._request_lock:
+                if request_id in self._active_requests:
+                    self._active_requests[request_id]["response"] = response
+            
             if response.status_code == 200:
                 if stream:
                     # Streaming mode
@@ -364,6 +411,13 @@ class OllamaClient:
                     tool_calls = []
                     
                     for line in response.iter_lines():
+                        # Check for cancellation
+                        with self._request_lock:
+                            if request_id in self._active_requests and self._active_requests[request_id]["cancelled"]:
+                                print(f"Request {request_id} cancelled, closing stream...")
+                                response.close()
+                                return {"error": "Request cancelled"}
+                        
                         if line:
                             try:
                                 data = json.loads(line.decode("utf-8"))
@@ -413,6 +467,74 @@ class OllamaClient:
                 
         except Exception as e:
             return {"error": f"Error: {str(e)}"}
+        finally:
+            # Clean up request tracking
+            with self._request_lock:
+                if request_id in self._active_requests:
+                    del self._active_requests[request_id]
+
+    def cancel_all_requests(self):
+        """Cancel all active streaming requests."""
+        with self._request_lock:
+            for request_id, request_info in self._active_requests.items():
+                request_info["cancelled"] = True
+                if request_info["response"] is not None:
+                    try:
+                        request_info["response"].close()
+                    except:
+                        pass
+            self._active_requests.clear()
+    
+    def stop_model(self, model_name: str) -> bool:
+        """
+        Stop a running Ollama model (like 'ollama stop <model>' command).
+        This immediately stops the model and clears GPU memory.
+
+        Args:
+            model_name: Name of the model to stop
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            import subprocess
+
+            result = subprocess.run(
+                ["ollama", "stop", model_name],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            
+            # Aggressive GPU memory cleanup after stop
+            try:
+                import torch
+                import gc
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                    for _ in range(5):
+                        torch.cuda.empty_cache()
+                    try:
+                        torch.cuda.ipc_collect()
+                    except AttributeError:
+                        pass
+                    try:
+                        torch.cuda.reset_peak_memory_stats()
+                    except:
+                        pass
+                    gc.collect()
+            except:
+                pass
+            
+            if result.returncode == 0:
+                print(f"Model {model_name} stopped successfully")
+                return True
+            else:
+                print(f"Model {model_name} not running or already stopped")
+                return False
+        except Exception as e:
+            print(f"Error stopping model {model_name}: {e}")
+            return False
 
     def unload_model(self, model_name: str) -> bool:
         """
