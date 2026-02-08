@@ -209,13 +209,13 @@ class AudioGenerator:
             if output_path:
                 output_dir = Path(output_path)
             elif self.storage_path:
-                output_dir = Path(self.storage_path) / "generated_audio"
+                from lokai.core.paths import SUBDIR_GENERATED_AUDIO
+                output_dir = Path(self.storage_path) / SUBDIR_GENERATED_AUDIO
             else:
+                from lokai.core.paths import get_audio_output_dir
                 from lokai.core.config_manager import ConfigManager
-
                 config_manager = ConfigManager()
-                output_dir = Path(config_manager.get_config_dir()) / "generated_audio"
-
+                output_dir = get_audio_output_dir(config_manager)
             output_dir.mkdir(exist_ok=True, parents=True)
 
             base_filename = f"audio_{int(time.time())}"

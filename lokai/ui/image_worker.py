@@ -10,6 +10,7 @@ from PIL import Image
 
 from lokai.core.image_generator import ImageGenerator
 from lokai.core.config_manager import ConfigManager
+from lokai.core.paths import get_image_output_dir, get_image_storage_path
 from pathlib import Path
 
 
@@ -87,9 +88,9 @@ class ImageGenerationWorker(QThread):
                 # Get LoRA path from model manager
                 from lokai.utils.model_manager import ModelManager
 
-                storage_path = self.config_manager.get("models.storage_path", "")
+                storage_path = get_image_storage_path(self.config_manager)
                 if storage_path:
-                    model_manager = ModelManager(storage_path)
+                    model_manager = ModelManager(str(storage_path))
                     detected_models = model_manager.detect_existing_models()
 
                     # Find LoRA by display name
@@ -185,13 +186,7 @@ class ImageGenerationWorker(QThread):
 
             # Save image to output folder
             self.progress_updated.emit(95)
-            # Get output path from config, fallback to default
-            output_path = self.config_manager.get("image_gen.output_path")
-            if output_path:
-                output_dir = Path(output_path)
-            else:
-                output_dir = Path(self.config_manager.get_config_dir()) / "generated_images"
-            output_dir.mkdir(parents=True, exist_ok=True)
+            output_dir = get_image_output_dir(self.config_manager)
 
             import time
 

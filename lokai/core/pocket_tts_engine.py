@@ -121,10 +121,9 @@ class PocketTTSEngine:
         """Get cache directory for converted audio files."""
         try:
             from lokai.core.config_manager import ConfigManager
+            from lokai.core.paths import get_voice_cache_dir
             config_manager = ConfigManager()
-            cache_dir = config_manager.get_config_dir() / "voice_cache"
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            return cache_dir
+            return get_voice_cache_dir(config_manager)
         except Exception:
             # Fallback to temp directory if config manager not available
             return Path(tempfile.gettempdir()) / "lokai_voice_cache"
