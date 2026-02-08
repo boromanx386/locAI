@@ -42,6 +42,7 @@ from lokai.ui.video_worker import VideoGenerationWorker
 from lokai.ui.audio_worker import AudioGenerationWorker
 from lokai.core.asr_engine import ASREngine
 from lokai.core.tools_handler import get_available_tools, execute_tool
+from lokai.core.paths import get_embeddings_dir, get_models_storage_path, get_image_storage_path, get_video_storage_path, get_audio_storage_path, get_asr_storage_path
 from lokai.ui.attachments import read_text_file_with_limits, format_file_size
 
 
@@ -135,9 +136,7 @@ class MainWindow(QMainWindow):
             )
             self.embedding_client.default_model = embedding_model
             # Store embeddings in config directory (will be set per chat)
-            config_dir = Path(self.config_manager.config_dir)
-            self.embeddings_dir = config_dir / "chat_embeddings"
-            self.embeddings_dir.mkdir(parents=True, exist_ok=True)
+            self.embeddings_dir = get_embeddings_dir(self.config_manager)
             # Initialize vector store for current chat if we already have a chat id
             if self.current_chat_id:
                 embedding_store_path = (
@@ -249,9 +248,7 @@ class MainWindow(QMainWindow):
                 )
                 self.embedding_client.default_model = embedding_model
                 # Ensure embeddings directory exists
-                config_dir = Path(self.config_manager.config_dir)
-                self.embeddings_dir = config_dir / "chat_embeddings"
-                self.embeddings_dir.mkdir(parents=True, exist_ok=True)
+                self.embeddings_dir = get_embeddings_dir(self.config_manager)
                 # Reload threshold and search parameters
                 self.semantic_memory_threshold = self.config_manager.get(
                     "rag.semantic_memory_threshold", 30
@@ -390,16 +387,16 @@ class MainWindow(QMainWindow):
 
     def _init_image_generator(self):
         """Initialize image generator if enabled and path is set."""
-        storage_path = self.config_manager.get("models.storage_path")
+        storage_path = get_image_storage_path(self.config_manager)
         if storage_path:
             try:
                 # Setup environment before importing diffusers
                 from lokai.utils.model_manager import ModelManager
 
-                manager = ModelManager(storage_path)
+                manager = ModelManager(str(storage_path))
                 manager.setup_environment_variables()
 
-                self.image_generator = ImageGenerator(storage_path)
+                self.image_generator = ImageGenerator(str(storage_path))
                 if not self.image_generator.is_available():
                     self.image_generator = None
                     print("Image generation not available (diffusers not installed)")
@@ -412,20 +409,16 @@ class MainWindow(QMainWindow):
 
     def _init_video_generator(self):
         """Initialize video generator if enabled and path is set."""
-        # Use video_gen.storage_path if set, otherwise fallback to models.storage_path
-        storage_path = self.config_manager.get("video_gen.storage_path")
-        if not storage_path:
-            storage_path = self.config_manager.get("models.storage_path")
-
+        storage_path = get_video_storage_path(self.config_manager)
         if storage_path:
             try:
                 # Setup environment before importing diffusers
                 from lokai.utils.model_manager import ModelManager
 
-                manager = ModelManager(storage_path)
+                manager = ModelManager(str(storage_path))
                 manager.setup_environment_variables()
 
-                self.video_generator = VideoGenerator(storage_path)
+                self.video_generator = VideoGenerator(str(storage_path))
                 if not self.video_generator.is_available():
                     self.video_generator = None
                     print("Video generation not available (diffusers not installed)")
@@ -438,20 +431,16 @@ class MainWindow(QMainWindow):
 
     def _init_audio_generator(self):
         """Initialize audio generator if enabled and path is set."""
-        # Use audio_gen.storage_path if set, otherwise fallback to models.storage_path
-        storage_path = self.config_manager.get("audio_gen.storage_path")
-        if not storage_path:
-            storage_path = self.config_manager.get("models.storage_path")
-
+        storage_path = get_audio_storage_path(self.config_manager)
         if storage_path:
             try:
                 # Setup environment before importing diffusers
                 from lokai.utils.model_manager import ModelManager
 
-                manager = ModelManager(storage_path)
+                manager = ModelManager(str(storage_path))
                 manager.setup_environment_variables()
 
-                self.audio_generator = AudioGenerator(storage_path)
+                self.audio_generator = AudioGenerator(str(storage_path))
                 if not self.audio_generator.is_available():
                     self.audio_generator = None
                     print("Audio generation not available (diffusers not installed)")
@@ -560,14 +549,10 @@ class MainWindow(QMainWindow):
 
             from lokai.core.asr_engine import ASREngine
 
-            # Use asr.storage_path if set, otherwise fallback to models.storage_path
-            storage_path = self.config_manager.get("asr.storage_path")
-            if not storage_path:
-                storage_path = self.config_manager.get("models.storage_path")
-            
+            storage_path = get_asr_storage_path(self.config_manager)
             # Get device from config (default to CPU)
             device = self.config_manager.get("asr.device", "cpu")
-            self.asr_engine = ASREngine(storage_path, device=device)
+            self.asr_engine = ASREngine(str(storage_path) if storage_path else None, device=device)
 
             if not self.asr_engine.is_available():
                 print("ASR engine not available (NeMo not installed)")
@@ -1623,10 +1608,13 @@ class MainWindow(QMainWindow):
             stylesheet = Theme.get_stylesheet(theme_name)
             self.setStyleSheet(stylesheet)
 
-            # Reinit image generator if storage path changed
-            storage_path = self.config_manager.get("models.storage_path")
-            if storage_path:
+            # Reinit generators if storage paths changed
+            if get_image_storage_path(self.config_manager):
                 self._init_image_generator()
+            if get_video_storage_path(self.config_manager):
+                self._init_video_generator()
+            if get_audio_storage_path(self.config_manager):
+                self._init_audio_generator()
 
             # Update TTS engine settings
             # Always reinitialize TTS engine when settings dialog closes

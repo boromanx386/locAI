@@ -30,6 +30,15 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QDesktopServices
 from lokai.core.config_manager import ConfigManager
+from lokai.core.paths import (
+    default_hf_cache_root,
+    get_image_output_dir,
+    get_video_output_dir,
+    get_audio_output_dir,
+    get_models_storage_path,
+    get_video_storage_path,
+    get_audio_storage_path,
+)
 from lokai.utils.model_manager import ModelManager
 from lokai.ui.material_icons import MaterialIcons
 from lokai.core.ollama_detector import OllamaDetector
@@ -1565,15 +1574,11 @@ class SettingsDialog(QDialog):
         """Browse for video model storage path."""
         current_path = self.video_model_path_edit.text()
         if not current_path:
-            # Default to Q: if available, otherwise use same as image models
-            if os.path.exists("Q:\\"):
-                current_path = "Q:\\huggingface_cache"
-            else:
-                current_path = (
-                    self.model_path_edit.text()
-                    if self.model_path_edit.text()
-                    else str(Path.home() / "Documents" / "locAI" / "models")
-                )
+            current_path = (
+                default_hf_cache_root()
+                or self.model_path_edit.text()
+                or str(Path.home() / "Documents" / "locAI" / "models")
+            )
 
         path = QFileDialog.getExistingDirectory(
             self, "Select Video Models Folder", current_path
@@ -1595,13 +1600,7 @@ class SettingsDialog(QDialog):
         """Browse for image output folder."""
         current_path = self.image_output_path_edit.text()
         if not current_path:
-            # Default to config directory / generated_images
-            from lokai.core.config_manager import ConfigManager
-
-            config_manager = ConfigManager()
-            current_path = str(
-                Path(config_manager.get_config_dir()) / "generated_images"
-            )
+            current_path = str(get_image_output_dir(self.config_manager))
 
         path = QFileDialog.getExistingDirectory(
             self, "Select Image Output Folder", current_path
@@ -1614,13 +1613,7 @@ class SettingsDialog(QDialog):
         """Browse for video output folder."""
         current_path = self.video_output_path_edit.text()
         if not current_path:
-            # Default to config directory / generated_videos
-            from lokai.core.config_manager import ConfigManager
-
-            config_manager = ConfigManager()
-            current_path = str(
-                Path(config_manager.get_config_dir()) / "generated_videos"
-            )
+            current_path = str(get_video_output_dir(self.config_manager))
 
         path = QFileDialog.getExistingDirectory(
             self, "Select Video Output Folder", current_path
@@ -1633,15 +1626,11 @@ class SettingsDialog(QDialog):
         """Browse for audio model storage path."""
         current_path = self.audio_model_path_edit.text()
         if not current_path:
-            # Default to Q: if available, otherwise use same as image models
-            if os.path.exists("Q:\\"):
-                current_path = "Q:\\huggingface_cache"
-            else:
-                current_path = (
-                    self.model_path_edit.text()
-                    if self.model_path_edit.text()
-                    else str(Path.home() / "Documents" / "locAI" / "models")
-                )
+            current_path = (
+                default_hf_cache_root()
+                or self.model_path_edit.text()
+                or str(Path.home() / "Documents" / "locAI" / "models")
+            )
 
         path = QFileDialog.getExistingDirectory(
             self, "Select Audio Models Folder", current_path
@@ -1660,13 +1649,7 @@ class SettingsDialog(QDialog):
         """Browse for audio output folder."""
         current_path = self.audio_output_path_edit.text()
         if not current_path:
-            # Default to config directory / generated_audio
-            from lokai.core.config_manager import ConfigManager
-
-            config_manager = ConfigManager()
-            current_path = str(
-                Path(config_manager.get_config_dir()) / "generated_audio"
-            )
+            current_path = str(get_audio_output_dir(self.config_manager))
 
         path = QFileDialog.getExistingDirectory(
             self, "Select Audio Output Folder", current_path
@@ -1682,13 +1665,8 @@ class SettingsDialog(QDialog):
         # Get video model storage path
         video_storage_path = self.video_model_path_edit.text()
         if not video_storage_path:
-            # Fallback to Q: if available, or image models path
-            if os.path.exists("Q:\\"):
-                video_storage_path = "Q:\\huggingface_cache"
-            else:
-                video_storage_path = self.model_path_edit.text()
-                if not video_storage_path:
-                    video_storage_path = self.config_manager.get("models.storage_path")
+            p = get_video_storage_path(self.config_manager)
+            video_storage_path = str(p) if p else (default_hf_cache_root() or self.model_path_edit.text() or "")
 
         if video_storage_path:
             try:
@@ -1795,10 +1773,10 @@ class SettingsDialog(QDialog):
         self.lora_combo.clear()
         self.lora_combo.addItem("None (No LoRA)")
 
-        # Get storage path
         storage_path = self.model_path_edit.text()
         if not storage_path:
-            storage_path = self.config_manager.get("models.storage_path")
+            p = get_models_storage_path(self.config_manager)
+            storage_path = str(p) if p else None
 
         if storage_path:
             try:
@@ -2546,11 +2524,8 @@ class SettingsDialog(QDialog):
 
         # Video Generation
         # Load video model storage path
-        video_model_path = self.config_manager.get("video_gen.storage_path")
-        if not video_model_path:
-            # Default to Q: if available
-            if os.path.exists("Q:\\"):
-                video_model_path = "Q:\\huggingface_cache"
+        video_storage_p = get_video_storage_path(self.config_manager)
+        video_model_path = str(video_storage_p) if video_storage_p else default_hf_cache_root()
         if video_model_path:
             self.video_model_path_edit.setText(video_model_path)
 
@@ -2610,11 +2585,8 @@ class SettingsDialog(QDialog):
 
         # Audio Generation
         # Load audio model storage path
-        audio_model_path = self.config_manager.get("audio_gen.storage_path")
-        if not audio_model_path:
-            # Default to Q: if available
-            if os.path.exists("Q:\\"):
-                audio_model_path = "Q:\\huggingface_cache"
+        audio_storage_p = get_audio_storage_path(self.config_manager)
+        audio_model_path = str(audio_storage_p) if audio_storage_p else default_hf_cache_root()
         if audio_model_path:
             self.audio_model_path_edit.setText(audio_model_path)
 

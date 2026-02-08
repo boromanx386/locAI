@@ -125,8 +125,8 @@
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │ Core (nema Qt nasljeđivanja)                                                     │
 ├─────────────────────────────────────────────────────────────────────────────────┤
-│  ConfigManager     OllamaClient     OllamaDetector     EmbeddingClient           │
-│  ChatVectorStore   ImageGenerator   VideoGenerator     AudioGenerator            │
+│  ConfigManager     paths (putanje)  OllamaClient     OllamaDetector               │
+│  ChatVectorStore   ImageGenerator   VideoGenerator   AudioGenerator              │
 │  ASREngine         TTSEngine        PocketTTSEngine    ImageProcessor            │
 │  tools_handler (get_available_tools, execute_tool)                               │
 │  GlobalShortcutHandler(QObject)                                                  │
@@ -144,6 +144,7 @@ lokai/
 │   └── default_config.json   # Zadana konfiguracija
 ├── core/
 │   ├── config_manager.py     # ConfigManager – čitanje/pisanje config.json
+│   ├── paths.py              # Centralizovane putanje (embedding, output dirs, HF cache)
 │   ├── ollama_client.py      # OllamaClient – API pozivi (generate, chat, tools)
 │   ├── ollama_detector.py    # OllamaDetector – je li Ollama instalirana/pokrenuta
 │   ├── asr_engine.py         # ASREngine – speech-to-text (voice input)

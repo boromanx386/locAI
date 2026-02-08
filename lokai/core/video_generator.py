@@ -355,17 +355,12 @@ class VideoGenerator:
             import time
 
             from lokai.core.config_manager import ConfigManager
+            from lokai.core.paths import get_video_output_dir, SUBDIR_GENERATED_VIDEOS
             config_manager = ConfigManager()
-            
-            # Get output path from config, fallback to default
-            output_path = config_manager.get("video_gen.output_path")
-            if output_path:
-                output_dir = Path(output_path)
-            elif self.storage_path:
-                output_dir = Path(self.storage_path) / "generated_videos"
+            if self.storage_path and not config_manager.get("video_gen.output_path"):
+                output_dir = Path(self.storage_path) / SUBDIR_GENERATED_VIDEOS
             else:
-                output_dir = Path(config_manager.get_config_dir()) / "generated_videos"
-
+                output_dir = get_video_output_dir(config_manager)
             output_dir.mkdir(exist_ok=True, parents=True)
 
             filename = f"video_{int(time.time())}.mp4"
