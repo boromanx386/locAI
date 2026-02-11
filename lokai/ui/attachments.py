@@ -7,16 +7,76 @@ import os
 from typing import Optional, Tuple
 
 # Allowed extensions for text/code attachments (lowercase, with dot)
-ALLOWED_ATTACHMENT_EXTENSIONS = frozenset({
-    ".txt", ".md", ".json", ".yaml", ".yml", ".xml", ".csv", ".log", ".ini", ".cfg",
-    ".toml", ".env", ".gitignore", ".dockerignore",
-    ".py", ".pyw", ".pyi", ".pyx",
-    ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".vue", ".svelte",
-    ".html", ".htm", ".css", ".scss", ".sass", ".less",
-    ".rs", ".go", ".java", ".kt", ".kts", ".c", ".h", ".cpp", ".hpp", ".cc", ".cxx",
-    ".cs", ".vb", ".fs", ".r", ".R", ".sql", ".sh", ".bash", ".zsh", ".ps1", ".bat", ".cmd",
-    ".rb", ".php", ".pl", ".lua", ".swift", ".m", ".mm", ".zig", ".v", ".sv", ".vhd",
-})
+ALLOWED_ATTACHMENT_EXTENSIONS = frozenset(
+    {
+        ".txt",
+        ".md",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".xml",
+        ".csv",
+        ".log",
+        ".ini",
+        ".cfg",
+        ".toml",
+        ".env",
+        ".gitignore",
+        ".dockerignore",
+        ".py",
+        ".pyw",
+        ".pyi",
+        ".pyx",
+        ".js",
+        ".mjs",
+        ".cjs",
+        ".ts",
+        ".tsx",
+        ".jsx",
+        ".vue",
+        ".svelte",
+        ".html",
+        ".htm",
+        ".css",
+        ".scss",
+        ".sass",
+        ".less",
+        ".rs",
+        ".go",
+        ".java",
+        ".kt",
+        ".kts",
+        ".c",
+        ".h",
+        ".cpp",
+        ".hpp",
+        ".cc",
+        ".cxx",
+        ".cs",
+        ".vb",
+        ".fs",
+        ".r",
+        ".R",
+        ".sql",
+        ".sh",
+        ".bash",
+        ".zsh",
+        ".ps1",
+        ".bat",
+        ".cmd",
+        ".rb",
+        ".php",
+        ".pl",
+        ".lua",
+        ".swift",
+        ".m",
+        ".mm",
+        ".zig",
+        ".v",
+        ".sv",
+        ".vhd",
+    }
+)
 
 
 def is_allowed_attachment(path: str) -> bool:
@@ -50,7 +110,9 @@ def is_probably_binary(path: str, max_sample: int = 8192) -> bool:
         text = data.decode("utf-8", errors="strict")
     except UnicodeDecodeError:
         return True
-    non_printable = sum(1 for c in text if c != "\n" and c != "\r" and ord(c) < 32 and c not in "\t")
+    non_printable = sum(
+        1 for c in text if c != "\n" and c != "\r" and ord(c) < 32 and c not in "\t"
+    )
     if len(text) == 0:
         return False
     return (non_printable / len(text)) > 0.1

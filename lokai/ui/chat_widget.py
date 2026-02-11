@@ -498,17 +498,44 @@ class ChatBubble(QFrame):
         )
 
         # Links: [text](url) -> <a href="url">text</a> (markdown format)
-        html = re.sub(
-            r"\[([^\]]+?)\]\(([^\)]+?)\)",
-            r'<a href="\2" style="color: #4A9EFF; text-decoration: underline;">\1</a>',
-            html,
-        )
+        # IMPORTANT: Only allow http/https URLs to avoid javascript:/file:/data: XSS vectors.
+        def _replace_markdown_link(match: re.Match) -> str:
+            link_text = match.group(1)
+            url = (match.group(2) or "").strip()
+
+            # Only allow http/https URLs, and reject ones containing quotes to keep href safe
+            url_lower = url.lower()
+            if not (url_lower.startswith("http://") or url_lower.startswith("https://")):
+                return link_text
+            if '"' in url or "'" in url:
+                return link_text
+
+            return (
+                f'<a href="{url}" '
+                'style="color: #4A9EFF; text-decoration: underline;">'
+                f"{link_text}</a>"
+            )
+
+        html = re.sub(r"\[([^\]]+?)\]\(([^\)]+?)\)", _replace_markdown_link, html)
 
         # Plain URLs: http://... or https://... -> <a href="url">url</a>
-        # Only match URLs that aren't already inside <a> tags
+        # Only match URLs that aren't already inside <a> tags.
+        # Use a greedy match for the URL and then strip trailing punctuation
+        # like '.', ',', ')', '!' which models sometimes append.
+        def _replace_plain_url(match: re.Match) -> str:
+            url = match.group(1)
+            # Strip common trailing punctuation that is usually not part of URL
+            while url and url[-1] in ".,!?)":
+                url = url[:-1]
+            return (
+                f'<a href="{url}" '
+                'style="color: #4A9EFF; text-decoration: underline;">'
+                f"{url}</a>"
+            )
+
         html = re.sub(
-            r'(?<!href=")(?<!>)(https?://[^\s<>"{}|\\^`\[\]]+?)(?![^<]*</a>)',
-            r'<a href="\1" style="color: #4A9EFF; text-decoration: underline;">\1</a>',
+            r'(?<!href=")(?<!>)(https?://[^\s<>"{}|\\^`\[\]]+)(?![^<]*</a>)',
+            _replace_plain_url,
             html,
         )
 
@@ -1627,27 +1654,28 @@ class ChatWidget(QWidget):
             """
             )
             # Reset mode button to default theme style (chat mode)
+            # Use blue theme with slightly darker hover, not global gray.
             self.image_mode_btn.setStyleSheet(
                 """
                 QPushButton {
-                    background: #4A9EFF;
+                    background-color: #4A9EFF;
                     color: white;
                     border: none;
                     border-radius: 10px;
                 }
                 QPushButton:hover {
-                    background: #3A3A3A;
+                    background-color: #3B82E0;
                 }
                 QPushButton:pressed {
-                    background: #FF6B6B;
+                    background-color: #2F6FC7;
                 }
             """
             )
-            # Reset Send button to default theme style
+            # Reset Send button to default blue theme style
             self.send_btn.setStyleSheet(
                 """
                 QPushButton {
-                    background: #4A9EFF;
+                    background-color: #4A9EFF;
                     color: white;
                     border: none;
                     border-radius: 10px;
@@ -1656,10 +1684,10 @@ class ChatWidget(QWidget):
                     font-size: 14px;
                 }
                 QPushButton:hover {
-                    background: #3A3A3A;
+                    background-color: #3B82E0;
                 }
                 QPushButton:pressed {
-                    background: #FF6B6B;
+                    background-color: #2F6FC7;
                 }
             """
             )
@@ -1672,10 +1700,10 @@ class ChatWidget(QWidget):
                     border-radius: 10px;
                 }
                 QPushButton:hover {
-                    background-color: #3A3A3A;
+                    background-color: #3B82E0;
                 }
                 QPushButton:pressed {
-                    background-color: #FF6B6B;
+                    background-color: #2F6FC7;
                 }
             """
             )
@@ -1688,10 +1716,10 @@ class ChatWidget(QWidget):
                     border-radius: 10px;
                 }
                 QPushButton:hover {
-                    background-color: #3A3A3A;
+                    background-color: #3B82E0;
                 }
                 QPushButton:pressed {
-                    background-color: #FF6B6B;
+                    background-color: #2F6FC7;
                 }
             """
             )
@@ -1797,10 +1825,10 @@ class ChatWidget(QWidget):
                         border-radius: 10px;
                     }
                     QPushButton:hover {
-                        background-color: #3A3A3A;
+                        background-color: #3B82E0;
                     }
                     QPushButton:pressed {
-                        background-color: #FF6B6B;
+                        background-color: #2F6FC7;
                     }
                 """
                 )

@@ -5,8 +5,10 @@ Handles tool execution when model calls tools/function calling.
 
 import requests
 from typing import Dict, Any, Optional, TYPE_CHECKING
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 from datetime import datetime, timedelta
+import socket
+import ipaddress
 
 if TYPE_CHECKING:
     from lokai.core.config_manager import ConfigManager
@@ -54,6 +56,54 @@ except ImportError:
 import json
 import math
 import re
+
+
+def _is_private_or_disallowed_url(url: str) -> bool:
+    """
+    Return True if the URL is not allowed for security reasons (SSRF protection).
+
+    Rules:
+    - Only http/https schemes are allowed.
+    - Block localhost / loopback / link-local / private IP ranges.
+    """
+    try:
+        parsed = urlparse(url)
+
+        # Require explicit http/https scheme
+        if parsed.scheme not in ("http", "https"):
+            return True
+
+        host = parsed.hostname or ""
+        if not host:
+            return True
+
+        # Explicit hostnames to block
+        if host.lower() in ("localhost",):
+            return True
+
+        # Resolve host and check all IPs
+        try:
+            addr_infos = socket.getaddrinfo(host, None)
+        except Exception:
+            # If we cannot resolve, be conservative and block
+            return True
+
+        for family, _, _, _, sockaddr in addr_infos:
+            ip_str = sockaddr[0]
+            try:
+                ip = ipaddress.ip_address(ip_str)
+            except ValueError:
+                # Skip weird results, but continue checking others
+                continue
+
+            if ip.is_loopback or ip.is_private or ip.is_link_local:
+                return True
+
+        # All resolved IPs are public
+        return False
+    except Exception:
+        # On any parsing error, block to be safe
+        return True
 
 
 def get_available_tools(config_manager: Optional["ConfigManager"] = None) -> list:
@@ -958,7 +1008,16 @@ def scrape_webpage(url: str, extract: str = "text", limit: int = 50) -> str:
         Izvučeni podaci kao string
     """
     print(f"[TOOL] Parsiram web stranicu: {url}, extract: {extract}, limit: {limit}")
-    
+
+    # Basic validation and SSRF protection
+    if not url:
+        return "Error: URL is required."
+    if _is_private_or_disallowed_url(url):
+        return (
+            "Error: This URL is not allowed for security reasons. "
+            "Only public http/https URLs are supported."
+        )
+
     if not HAS_BEAUTIFULSOUP:
         return "Web scraping not available - missing library 'beautifulsoup4'. Install: pip install beautifulsoup4"
     

@@ -1,32 +1,32 @@
 # Core
-PySide6>=6.9.0
-requests>=2.31.0
-Pillow>=9.0.0
+PySide6==6.9.2
+requests==2.32.5
+Pillow==11.3.0
 
 # Tools (web search, YouTube, translate, scrape)
-ddgs>=1.0.0
-yt-dlp>=2024.0.0
-youtube-transcript-api>=0.6.0
-deep-translator>=1.11.0
-beautifulsoup4>=4.12.0
+ddgs==9.10.0
+yt-dlp==2025.12.8
+youtube-transcript-api==1.2.3
+deep-translator==1.11.4
+beautifulsoup4==4.14.3
 
 # TTS
-kokoro>=0.1.0
-soundfile>=0.12.0
-pygame>=2.5.0
-pocket-tts>=1.0.0
-scipy>=1.16.0
+kokoro==0.9.4
+soundfile==0.13.1
+pygame==2.5.2
+pocket-tts==1.0.1
+scipy==1.16.1
 
 # Image / Video / Audio (diffusers)
-torch>=2.0.0
-torchsde>=0.2.6
-diffusers>=0.35.0
-transformers>=4.56.0
-peft>=0.7.0
-numpy>=1.24.0
+torch==2.9.1+cu128
+torchsde==0.2.6
+diffusers==0.34.0
+transformers==4.56.0
+peft==0.15.0
+numpy==1.26.4
 
 # Global shortcuts
-keyboard>=0.13.5
+keyboard==0.13.5
 
 # ASR (optional – voice input; uncomment if you need it)
 # Cython>=0.29.0

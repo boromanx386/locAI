@@ -370,6 +370,23 @@ class MainWindow(QMainWindow):
                     ),
                 ),
             }
+
+    def on_tools_toggled(self, enabled: bool):
+        """
+        Handle tools toggle from status panel and persist to config.
+
+        When disabled, all subsequent requests will skip tools even if the model
+        supports them, and this also helps models without tools to work normally.
+        """
+        try:
+            # Update config value so it persists across sessions
+            self.config_manager.set("ollama.tools.enabled", enabled)
+            # Optionally give a short status bar hint
+            if hasattr(self, "status_bar") and self.status_bar:
+                state = "enabled" if enabled else "disabled"
+                self.status_bar.showMessage(f"Tools {state}")
+        except Exception as e:
+            print(f"Error updating tools toggle: {e}")
         else:
             # Use global defaults
             self._conversation_settings_cache = {
@@ -695,6 +712,12 @@ class MainWindow(QMainWindow):
         )
         # Connect stop button
         self.status_panel.stop_clicked.connect(self.on_stop_all_operations)
+        # Sync tools toggle with config and handle user toggles
+        tools_enabled_cfg = self.config_manager.get("ollama.tools.enabled", False)
+        if hasattr(self.status_panel, "set_tools_enabled"):
+            self.status_panel.set_tools_enabled(tools_enabled_cfg)
+        if hasattr(self.status_panel, "tools_toggled"):
+            self.status_panel.tools_toggled.connect(self.on_tools_toggled)
 
         # Initialize chat ID and vector store for embedding
         if self.embedding_enabled:
@@ -1796,10 +1819,17 @@ class MainWindow(QMainWindow):
             "About locAI",
             "locAI - Local AI Assistant\n\n"
             "Version 1.0.0\n\n"
-            "A commercial desktop AI assistant combining:\n"
-            "- LLM (via Ollama)\n"
-            "- Image Generation (Stable Diffusion)\n"
-            "- Text-to-Speech (Edge TTS)\n\n"
+            "Desktop assistant that runs local AI through Ollama and\n"
+            "optionally adds image, video, audio generation, ASR, and TTS.\n\n"
+            "Key features:\n"
+            "- Chat with local LLMs via Ollama\n"
+            "- Image / video / audio generation (optional)\n"
+            "- Text-to-speech with Kokoro or PocketTTS\n"
+            "- Voice input (ASR, optional)\n"
+            "- Tools (web search, YouTube, translate, scrape) – toggle in toolbar\n"
+            "- Manual semantic memory (RAG) per chat\n\n"
+            "Project homepage and documentation are in the README.\n"
+            "License: MIT\n"
             "© 2025",
         )
 
