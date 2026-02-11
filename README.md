@@ -18,34 +18,28 @@ locAI is a desktop AI assistant that combines Large Language Models (LLM), Image
 ## Requirements
 
 ### Essential
-- **Python 3.8+**
-- **Ollama**: Must be installed separately from [ollama.com](https://ollama.com/download)
-- **PySide6**: GUI framework (installed automatically)
+- **Python 3.10+** (3.8+ may work; 3.10+ recommended)
+- **Ollama** – install from [ollama.com](https://ollama.com/download) and ensure it’s in your PATH
+- Dependencies from `lokai/requirements.txt` (see below)
 
-### Optional (for Image Generation)
-- **PyTorch**: For Stable Diffusion models
-- **CUDA**: For GPU acceleration (recommended)
-- **diffusers**: Stable Diffusion library
-- **GPU**: NVIDIA GPU with 8GB+ VRAM recommended (optimized to work efficiently with 8GB)
+### What’s in requirements.txt
+- **Core**: PySide6, requests, Pillow (GUI, Ollama API, images)
+- **Tools**: ddgs, yt-dlp, youtube-transcript-api, deep-translator, beautifulsoup4 (web search, YouTube, translate, scrape)
+- **TTS**: kokoro, soundfile, pygame, pocket-tts, scipy (Kokoro and/or PocketTTS)
+- **Image/Video/Audio**: torch, diffusers, transformers, peft, numpy (Stable Diffusion, SVD, Stable Audio)
+- **Other**: keyboard (global shortcuts)
 
-### TTS Requirements
-- **kokoro**: Kokoro-82M TTS engine (optional, for multi-language support)
-- **pocket-tts**: PocketTTS engine with voice cloning support (optional)
-- **soundfile**: Audio file handling for TTS
-- **scipy**: For PocketTTS audio processing
+### Optional – ASR (voice input)
+ASR (NVIDIA NeMo) is **not** installed by default. To enable voice input, uncomment the ASR block in `lokai/requirements.txt` and install:
 
-### ASR Requirements (Optional)
-- **nemo_toolkit**: NVIDIA NeMo Toolkit for Automatic Speech Recognition
-- **sounddevice**: Audio input device interface
-- **webrtcvad**: Voice Activity Detection
-- **Cython**: Required for NeMo ASR installation
+```bash
+pip install Cython>=0.29.0 sounddevice webrtcvad
+pip install "nemo_toolkit[asr] @ git+https://github.com/NVIDIA/NeMo.git@main"
+```
 
-### Video Generation Requirements (Optional)
-- **diffusers**: For Stable Video Diffusion models
-- **GPU**: NVIDIA GPU with 8GB+ VRAM recommended
-
-### Audio Generation Requirements (Optional)
-- **diffusers**: For Stable Audio Open models
+### Optional – GPU
+- **CUDA** for GPU acceleration (recommended for image/video/audio)
+- **NVIDIA GPU with 8GB+ VRAM** recommended; the app is tuned to work with 8GB
 
 ## Installation
 
@@ -74,25 +68,42 @@ This downloads the Llama 3.2 model (approximately 2GB).
 
 ### 3. Install locAI
 
-**Full installation (includes Image Generation):**
+From the project root (the folder that contains the `lokai` directory):
+
 ```bash
+pip install -r lokai/requirements.txt
+```
+
+Or from inside `lokai`:
+
+```bash
+cd lokai
 pip install -r requirements.txt
 ```
 
-**Note:** 
-- TTS supports both `kokoro` (multi-language) and `pocket-tts` (voice cloning) engines
-- ASR requires `nemo_toolkit` which is installed from source (see requirements.txt)
-- All optional dependencies are included in requirements.txt, but can be skipped if you don't need those features
+**Notes:**
+- TTS: use **Kokoro** (multi-language) and/or **PocketTTS** (voice cloning); both are in requirements.
+- Image/Video/Audio: need PyTorch + diffusers (in requirements); first run will download models.
+- ASR (voice input): optional; uncomment the ASR section in `requirements.txt` and install as in the Optional – ASR section above.
 
 ### 4. Run locAI
 
+From the project root:
+
 ```bash
+python -m lokai
+```
+
+Or from inside `lokai`:
+
+```bash
+cd lokai
 python main.py
 ```
 
 On first run, the setup wizard will guide you through:
 - Ollama detection and verification
-- Model storage location configuration
+- Model storage location (optional)
 - Theme selection
 
 ## Usage
@@ -161,27 +172,26 @@ Generate audio using Stable Audio Open:
 
 ## Configuration
 
-### Model Storage Location
+### Config and data locations
 
-By default, all models (image, video, audio, ASR, TTS) are stored in:
-- Windows: `Documents/locAI/models`
+- **Config file**:  
+  - Windows: `%LOCALAPPDATA%\locAI\config.json`  
+  - Linux/Mac: `~/.config/lokai/config.json`
+- **Generated files** (if not overridden in Settings): images, video, and audio go into subfolders of the config directory (e.g. `generated_images`, `generated_videos`, `generated_audio`).
+- **Chat embeddings** (RAG): stored under the config directory in `chat_embeddings`.
+
+### Model storage location
+
+You can set where models are stored in **Settings > Ollama / Models** (e.g. image, video, audio, ASR). Default if not set:
+- Windows: `Documents\locAI\models`
 - Linux/Mac: `~/Documents/locAI/models`
 
-You can change this location in Settings > Models. The application automatically organizes models by type:
-- Image generation models (Stable Diffusion)
-- Video generation models (Stable Video Diffusion)
-- Audio generation models (Stable Audio)
-- ASR models (NVIDIA Nemotron)
-- TTS voice files (Hugging Face cache)
+The app uses this path for Hugging Face caches (diffusers, transformers, etc.) and organizes models by type (Stable Diffusion, SVD, Stable Audio, NeMo ASR, TTS).
 
-### Environment Variables
+### Environment variables
 
-locAI automatically sets Hugging Face cache environment variables based on your configured model storage path:
-- `HF_HOME`
-- `TRANSFORMERS_CACHE`
-- `HF_DATASETS_CACHE`
-- `HF_HUB_CACHE`
-- `DIFFUSERS_CACHE`
+- **`LOCAI_HF_CACHE`** (optional): Override the Hugging Face cache root **before** starting the app (e.g. to use another drive). If unset, the app may use a default (e.g. `Q:\huggingface_cache` if that drive exists) or the path you set in Settings.
+- The app also sets: `HF_HOME`, `HF_HUB_CACHE`, `TRANSFORMERS_CACHE`, `HF_DATASETS_CACHE`, `DIFFUSERS_CACHE` when using image/video/audio features.
 
 ## GPU Memory Optimization
 
@@ -264,36 +274,47 @@ The application is optimized for 8GB+ GPUs, but if you have less VRAM, you may n
 
 ```
 lokai/
-├── core/           # Core functionality (Ollama, TTS, ASR, Image/Video/Audio Gen)
-│   ├── asr_engine.py          # Automatic Speech Recognition
-│   ├── audio_generator.py     # Audio generation (Stable Audio)
-│   ├── image_generator.py     # Image generation (Stable Diffusion)
-│   ├── pocket_tts_engine.py   # PocketTTS engine with voice cloning
-│   ├── tts_engine.py          # Kokoro TTS engine
-│   ├── video_generator.py     # Video generation (SVD)
-│   └── ...                    # Other core modules
-├── ui/             # User interface components
-│   ├── asr_worker.py          # ASR background worker
-│   ├── audio_player_widget.py # Audio playback widget
-│   ├── voice_input_widget.py  # Voice input interface
-│   └── ...                    # Other UI components
-├── utils/          # Utility modules
-├── config/         # Configuration files
-└── main.py         # Entry point
+├── main.py             # Entry point
+├── requirements.txt    # Dependencies (core, tools, TTS, diffusers; ASR optional)
+├── config/
+│   └── default_config.json
+├── core/               # Core logic (no UI)
+│   ├── config_manager.py   # Config load/save
+│   ├── paths.py            # Centralized paths (cache, output dirs)
+│   ├── ollama_client.py    # Ollama API
+│   ├── ollama_detector.py
+│   ├── asr_engine.py       # ASR (NeMo)
+│   ├── tts_engine.py       # Kokoro TTS
+│   ├── pocket_tts_engine.py
+│   ├── image_generator.py  # Stable Diffusion
+│   ├── video_generator.py  # SVD
+│   ├── audio_generator.py  # Stable Audio
+│   ├── tools_handler.py    # Web search, YouTube, translate, scrape
+│   └── ...
+├── ui/                 # PySide6 UI
+│   ├── main_window.py
+│   ├── chat_widget.py
+│   ├── settings_dialog.py
+│   ├── setup_wizard.py
+│   ├── voice_input_widget.py
+│   ├── audio_player_widget.py
+│   └── ...
+└── utils/
+    └── model_manager.py
 ```
 
 ## Development
 
-### Running from Source
+### Running from source
 
 ```bash
-# Clone or navigate to project directory
+# From project root (parent of lokai/)
+pip install -r lokai/requirements.txt
+python -m lokai
+
+# Or from inside lokai/
 cd lokai
-
-# Install dependencies
 pip install -r requirements.txt
-
-# Run
 python main.py
 ```
 
@@ -305,7 +326,8 @@ locAI uses PySide6 for the GUI. For distribution:
 
 ## License
 
-[Add your license here]
+This project is licensed under the **MIT License**.  
+See the `LICENSE` file for the full text.
 
 ## Support
 
