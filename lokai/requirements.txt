@@ -1,24 +1,35 @@
+# Core
 PySide6>=6.9.0
 requests>=2.31.0
+Pillow>=9.0.0
+
+# Tools (web search, YouTube, translate, scrape)
 ddgs>=1.0.0
 yt-dlp>=2024.0.0
 youtube-transcript-api>=0.6.0
 deep-translator>=1.11.0
+beautifulsoup4>=4.12.0
+
+# TTS
 kokoro>=0.1.0
 soundfile>=0.12.0
-Pillow>=9.0.0
+pygame>=2.5.0
+pocket-tts>=1.0.0
+scipy>=1.16.0
+
+# Image / Video / Audio (diffusers)
 torch>=2.0.0
 torchsde>=0.2.6
 diffusers>=0.35.0
 transformers>=4.56.0
 peft>=0.7.0
-keyboard>=0.13.5
 numpy>=1.24.0
-pocket-tts>=1.0.0
-scipy>=1.16.0
 
-# NeMo ASR dependencies
-Cython>=0.29.0
-nemo_toolkit[asr] @ git+https://github.com/NVIDIA/NeMo.git@main
-sounddevice>=0.4.0
-webrtcvad>=2.0.10
+# Global shortcuts
+keyboard>=0.13.5
+
+# ASR (optional – voice input; uncomment if you need it)
+# Cython>=0.29.0
+# nemo_toolkit[asr] @ git+https://github.com/NVIDIA/NeMo.git@main
+# sounddevice>=0.4.0
+# webrtcvad>=2.0.10
