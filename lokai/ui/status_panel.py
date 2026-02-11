@@ -28,6 +28,7 @@ class StatusPanel(QFrame):
     tts_voice_changed = Signal(str)
     refresh_clicked = Signal()  # Emitted when refresh button is clicked
     stop_clicked = Signal()  # Emitted when stop button is clicked
+    tools_toggled = Signal(bool)  # Emitted when tools toggle is changed
 
     def __init__(self, detector: OllamaDetector, client: OllamaClient):
         """
@@ -101,6 +102,22 @@ class StatusPanel(QFrame):
         self.refresh_btn.setToolTip("Refresh model list")
         self.refresh_btn.setMaximumWidth(32)
         self.refresh_btn.setMaximumHeight(32)
+        # Match chat widget blue button theme (hover = slightly darker blue)
+        self.refresh_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #4A9EFF;
+                border: none;
+                border-radius: 10px;
+            }
+            QPushButton:hover {
+                background-color: #3B82E0;
+            }
+            QPushButton:pressed {
+                background-color: #2F6FC7;
+            }
+            """
+        )
         self.refresh_btn.clicked.connect(self._on_refresh_clicked)
         layout.addWidget(self.refresh_btn)
 
@@ -112,10 +129,38 @@ class StatusPanel(QFrame):
         self.stop_btn.setToolTip("Stop all operations (Ollama & Image Generation)")
         self.stop_btn.setMaximumWidth(32)
         self.stop_btn.setMaximumHeight(32)
+        self.stop_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #E74C3C;
+                border: none;
+                border-radius: 10px;
+            }
+            QPushButton:hover {
+                background-color: #C0392B;
+            }
+            QPushButton:pressed {
+                background-color: #A93226;
+            }
+            """
+        )
         self.stop_btn.clicked.connect(self._on_stop_clicked)
         layout.addWidget(self.stop_btn)
 
-        # Semantic memory indicator (if enabled)
+        # Tools toggle button (placed next to Stop button)
+        self.tools_enabled = False
+        self.tools_btn = QPushButton()
+        self.tools_btn.setCheckable(True)
+        # Use a construction/tools style icon for tools toggle
+        MaterialIcons.apply_to_button(
+            self.tools_btn, MaterialIcons.TOOLS_SVG, size=18, keep_text=False
+        )
+        self.tools_btn.setMaximumWidth(32)
+        self.tools_btn.setMaximumHeight(32)
+        self.tools_btn.clicked.connect(self._on_tools_clicked)
+        layout.addWidget(self.tools_btn)
+
+        # Semantic memory indicator (if enabled) – placed to the right of tools toggle
         self.semantic_memory_label = QLabel()
         MaterialIcons.apply_to_label(
             self.semantic_memory_label, MaterialIcons.COGNITION_2_SVG, size=20
@@ -171,20 +216,27 @@ class StatusPanel(QFrame):
         self.tts_play_btn.setToolTip("Play TTS")
         self.tts_play_btn.setMaximumWidth(32)
         self.tts_play_btn.setMaximumHeight(32)
+        self.tts_play_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #4A9EFF;
+                border: none;
+                border-radius: 10px;
+            }
+            QPushButton:hover {
+                background-color: #3B82E0;
+            }
+            QPushButton:pressed {
+                background-color: #2F6FC7;
+            }
+            """
+        )
         self.tts_play_btn.clicked.connect(self.on_tts_play)
         layout.addWidget(self.tts_play_btn)
 
-        # TTS Pause button
+        # TTS Pause button (currently disabled/hidden – pause not supported reliably)
         self.tts_pause_btn = QPushButton()
-        MaterialIcons.apply_to_button(
-            self.tts_pause_btn, MaterialIcons.PAUSE_SVG, size=18, keep_text=False
-        )
-        self.tts_pause_btn.setToolTip("Pause TTS")
-        self.tts_pause_btn.setMaximumWidth(32)
-        self.tts_pause_btn.setMaximumHeight(32)
-        self.tts_pause_btn.setEnabled(False)
-        self.tts_pause_btn.clicked.connect(self.on_tts_pause)
-        layout.addWidget(self.tts_pause_btn)
+        self.tts_pause_btn.hide()
 
         # TTS Stop button
         self.tts_stop_btn = QPushButton()
@@ -195,6 +247,21 @@ class StatusPanel(QFrame):
         self.tts_stop_btn.setMaximumWidth(32)
         self.tts_stop_btn.setMaximumHeight(32)
         self.tts_stop_btn.setEnabled(False)
+        self.tts_stop_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #4A9EFF;
+                border: none;
+                border-radius: 10px;
+            }
+            QPushButton:hover {
+                background-color: #3B82E0;
+            }
+            QPushButton:pressed {
+                background-color: #2F6FC7;
+            }
+            """
+        )
         self.tts_stop_btn.clicked.connect(self.on_tts_stop)
         layout.addWidget(self.tts_stop_btn)
 
@@ -291,6 +358,62 @@ class StatusPanel(QFrame):
                 self.semantic_memory_label.setToolTip("Semantic memory: active")
         else:
             self.semantic_memory_label.setVisible(False)
+
+    def set_tools_enabled(self, enabled: bool):
+        """
+        Set tools toggle state from outside (without emitting signal again).
+        """
+        self.tools_enabled = enabled
+        # Block signals to avoid recursive updates
+        self.tools_btn.blockSignals(True)
+        self.tools_btn.setChecked(enabled)
+        self.tools_btn.blockSignals(False)
+        self._update_tools_button_tooltip()
+
+    def _on_tools_clicked(self):
+        """Handle tools toggle button click."""
+        self.tools_enabled = self.tools_btn.isChecked()
+        self._update_tools_button_tooltip()
+        self.tools_toggled.emit(self.tools_enabled)
+
+    def _update_tools_button_tooltip(self):
+        """Update tools button tooltip based on current state."""
+        if self.tools_enabled:
+            self.tools_btn.setToolTip("Tools: enabled")
+            # Green when tools are ON
+            self.tools_btn.setStyleSheet(
+                """
+                QPushButton {
+                    background-color: #4CAF50;
+                    border: none;
+                    border-radius: 10px;
+                }
+                QPushButton:hover {
+                    background-color: #43A047;
+                }
+                QPushButton:pressed {
+                    background-color: #388E3C;
+                }
+                """
+            )
+        else:
+            self.tools_btn.setToolTip("Tools: disabled")
+            # Blue when tools are OFF (match other controls)
+            self.tools_btn.setStyleSheet(
+                """
+                QPushButton {
+                    background-color: #4A9EFF;
+                    border: none;
+                    border-radius: 10px;
+                }
+                QPushButton:hover {
+                    background-color: #3B82E0;
+                }
+                QPushButton:pressed {
+                    background-color: #2F6FC7;
+                }
+                """
+            )
 
     def refresh_models(self):
         """Refresh the list of available models (non-blocking)."""
