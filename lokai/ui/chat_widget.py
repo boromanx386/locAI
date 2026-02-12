@@ -1336,6 +1336,16 @@ class ChatWidget(QWidget):
         self.scroll_to_bottom()
         # Hide status indicator
         self.status_indicator.setVisible(False)
+        # Restore input focus and cursor visibility (fixes cursor sometimes stuck / not blinking)
+        QTimer.singleShot(50, self._ensure_input_cursor_visible)
+
+    def _ensure_input_cursor_visible(self):
+        """Refocus input and force cursor/viewport repaint so cursor is visible and blinking."""
+        if not hasattr(self, "input_field") or not self.input_field:
+            return
+        self.input_field.setFocus()
+        self.input_field.ensureCursorVisible()
+        self.input_field.viewport().update()
 
     def add_assistant_message(self, message: str, message_index: int = -1):
         """Add complete assistant message (for loading saved chats)."""
@@ -1891,8 +1901,9 @@ class ChatWidget(QWidget):
         # Get image path if available
         image_path = self.last_uploaded_image
 
-        # Clear input
+        # Clear input and restore cursor visibility (avoids cursor "freeze" after send)
         self.input_field.clear()
+        self._ensure_input_cursor_visible()
 
         # Clear uploaded image after sending
         self.last_uploaded_image = None
@@ -2216,9 +2227,10 @@ class ChatWidget(QWidget):
                 # If input is empty, just set the transcription
                 self.input_field.setPlainText(text.strip())
             
-            # Focus input field so user can review/edit before sending
+            # Focus input field and ensure cursor visible after inserting text
             self.input_field.setFocus()
-            
+            self._ensure_input_cursor_visible()
+
             # Auto-send disabled - user must press Enter or Send button to confirm
             # This allows reviewing/editing the transcription before sending
             auto_send = False

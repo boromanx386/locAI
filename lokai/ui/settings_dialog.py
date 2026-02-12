@@ -111,10 +111,6 @@ class SettingsDialog(QDialog):
         self.rag_tab = self.create_rag_tab()
         self.tabs.addTab(self.rag_tab, "Semantic Memory")
 
-        # Prompts tab
-        self.prompts_tab = self.create_prompts_tab()
-        self.tabs.addTab(self.prompts_tab, "Prompts")
-
         layout.addWidget(self.tabs)
 
         # Buttons
@@ -146,16 +142,79 @@ class SettingsDialog(QDialog):
         self.theme_combo.addItems(["dark", "light"])
         theme_layout.addRow("Theme:", self.theme_combo)
 
-        self.font_size_spin = QSpinBox()
-        self.font_size_spin.setRange(10, 24)
-        self.font_size_spin.setValue(14)
-        theme_layout.addRow("Font Size:", self.font_size_spin)
-
-        self.compact_mode_check = QCheckBox("Compact Mode")
-        theme_layout.addRow("", self.compact_mode_check)
-
         theme_group.setLayout(theme_layout)
         layout.addWidget(theme_group)
+
+        # Global shortcuts group
+        shortcuts_group = QGroupBox("Global Shortcuts")
+        shortcuts_layout = QFormLayout()
+
+        # Enable/disable global shortcuts
+        self.global_shortcuts_check = QCheckBox("Enable global shortcuts (system-wide)")
+        self.global_shortcuts_check.setToolTip(
+            "If enabled, locAI can react to a global hotkey even when it is not focused.\n"
+            "The selected text will be sent to TTS or Image generation."
+        )
+        shortcuts_layout.addRow("", self.global_shortcuts_check)
+
+        # TTS shortcut key (free-form, supports combos like 'ctrl+shift+t')
+        self.tts_shortcut_edit = QLineEdit()
+        self.tts_shortcut_edit.setPlaceholderText("e.g. f9, ctrl+shift+t")
+        self.tts_shortcut_edit.setToolTip(
+            "Single key (e.g. f9) is most reliable. Combos: ctrl+shift+t, alt+f9.\n"
+            "Use only + between keys, no spaces. On Windows, combos may need app run as Administrator."
+        )
+        shortcuts_layout.addRow("TTS shortcut:", self.tts_shortcut_edit)
+
+        # Image shortcut key (free-form, supports combos like 'ctrl+shift+i')
+        self.image_shortcut_edit = QLineEdit()
+        self.image_shortcut_edit.setPlaceholderText("e.g. f10, ctrl+shift+i")
+        self.image_shortcut_edit.setToolTip(
+            "Single key (e.g. f10) is most reliable. Combos: ctrl+shift+i, alt+f10.\n"
+            "Use only + between keys, no spaces. On Windows, combos may need app run as Administrator."
+        )
+        shortcuts_layout.addRow("Image shortcut:", self.image_shortcut_edit)
+
+        shortcuts_group.setLayout(shortcuts_layout)
+        layout.addWidget(shortcuts_group)
+
+        # Prompt templates (merged from former Prompts tab)
+        prompts_group = QGroupBox("Prompt templates")
+        prompts_group_layout = QVBoxLayout()
+        info_label = QLabel(
+            "Manage prompt templates for the chat prompt button. Add, edit, or delete."
+        )
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("color: #888; padding: 4px 0;")
+        prompts_group_layout.addWidget(info_label)
+        self.prompts_list = QListWidget()
+        self.prompts_list.setToolTip("List of saved prompts. Double-click to edit.")
+        self.prompts_list.setMaximumHeight(120)
+        self.prompts_list.itemDoubleClicked.connect(self.edit_prompt)
+        prompts_group_layout.addWidget(self.prompts_list)
+        btn_layout = QHBoxLayout()
+        self.add_prompt_btn = QPushButton("Add")
+        MaterialIcons.apply_to_button(
+            self.add_prompt_btn, MaterialIcons.SAVE_SVG, size=18
+        )
+        self.add_prompt_btn.clicked.connect(self.add_prompt)
+        self.edit_prompt_btn = QPushButton("Edit")
+        MaterialIcons.apply_to_button(
+            self.edit_prompt_btn, MaterialIcons.SETTINGS_SVG, size=18
+        )
+        self.edit_prompt_btn.clicked.connect(self.edit_prompt)
+        self.delete_prompt_btn = QPushButton("Delete")
+        MaterialIcons.apply_to_button(
+            self.delete_prompt_btn, MaterialIcons.DELETE_SVG, size=18
+        )
+        self.delete_prompt_btn.clicked.connect(self.delete_prompt)
+        btn_layout.addWidget(self.add_prompt_btn)
+        btn_layout.addWidget(self.edit_prompt_btn)
+        btn_layout.addWidget(self.delete_prompt_btn)
+        btn_layout.addStretch()
+        prompts_group_layout.addLayout(btn_layout)
+        prompts_group.setLayout(prompts_group_layout)
+        layout.addWidget(prompts_group)
 
         layout.addStretch()
         widget.setLayout(layout)
@@ -1279,57 +1338,6 @@ class SettingsDialog(QDialog):
             self.embedding_model_combo.clear()
             self.embedding_model_combo.addItems(fallback_models)
 
-    def create_prompts_tab(self) -> QWidget:
-        """Create Prompts management tab."""
-        widget = QWidget()
-        layout = QVBoxLayout()
-        layout.setSpacing(12)
-
-        # Info label
-        info_label = QLabel(
-            "Manage your prompt templates. Click 'Add' to create a new prompt, "
-            "or select an existing one to edit or delete."
-        )
-        info_label.setWordWrap(True)
-        info_label.setStyleSheet("color: #888; padding: 8px;")
-        layout.addWidget(info_label)
-
-        # List widget for prompts
-        self.prompts_list = QListWidget()
-        self.prompts_list.setToolTip("List of saved prompts. Double-click to edit.")
-        self.prompts_list.itemDoubleClicked.connect(self.edit_prompt)
-        layout.addWidget(self.prompts_list)
-
-        # Buttons
-        btn_layout = QHBoxLayout()
-        self.add_prompt_btn = QPushButton("Add")
-        MaterialIcons.apply_to_button(
-            self.add_prompt_btn, MaterialIcons.SAVE_SVG, size=18
-        )
-        self.add_prompt_btn.clicked.connect(self.add_prompt)
-
-        self.edit_prompt_btn = QPushButton("Edit")
-        MaterialIcons.apply_to_button(
-            self.edit_prompt_btn, MaterialIcons.SETTINGS_SVG, size=18
-        )
-        self.edit_prompt_btn.clicked.connect(self.edit_prompt)
-
-        self.delete_prompt_btn = QPushButton("Delete")
-        MaterialIcons.apply_to_button(
-            self.delete_prompt_btn, MaterialIcons.DELETE_SVG, size=18
-        )
-        self.delete_prompt_btn.clicked.connect(self.delete_prompt)
-
-        btn_layout.addWidget(self.add_prompt_btn)
-        btn_layout.addWidget(self.edit_prompt_btn)
-        btn_layout.addWidget(self.delete_prompt_btn)
-        btn_layout.addStretch()
-        layout.addLayout(btn_layout)
-
-        layout.addStretch()
-        widget.setLayout(layout)
-        return widget
-
     def add_prompt(self):
         """Add a new prompt."""
         from PySide6.QtWidgets import QInputDialog
@@ -2212,11 +2220,15 @@ class SettingsDialog(QDialog):
         theme = self.config_manager.get("ui.theme", "dark")
         self.theme_combo.setCurrentText(theme)
 
-        font_size = self.config_manager.get("ui.font_size", 14)
-        self.font_size_spin.setValue(font_size)
+        # Global shortcuts
+        shortcuts_enabled = self.config_manager.get("shortcuts.global.enabled", True)
+        self.global_shortcuts_check.setChecked(shortcuts_enabled)
 
-        compact_mode = self.config_manager.get("ui.compact_mode", False)
-        self.compact_mode_check.setChecked(compact_mode)
+        tts_key = self.config_manager.get("shortcuts.global.tts", "f9")
+        image_key = self.config_manager.get("shortcuts.global.image", "f10")
+        # Show the exact strings (uppercased just for display)
+        self.tts_shortcut_edit.setText((tts_key or "f9").upper())
+        self.image_shortcut_edit.setText((image_key or "f10").upper())
 
         # Ollama
         ollama_url = self.config_manager.get(
@@ -2694,8 +2706,16 @@ class SettingsDialog(QDialog):
         """Save settings to config."""
         # General
         self.config_manager.set("ui.theme", self.theme_combo.currentText())
-        self.config_manager.set("ui.font_size", self.font_size_spin.value())
-        self.config_manager.set("ui.compact_mode", self.compact_mode_check.isChecked())
+
+        # Global shortcuts
+        self.config_manager.set(
+            "shortcuts.global.enabled", self.global_shortcuts_check.isChecked()
+        )
+        # Store keys in lowercase form (keyboard library expects this format)
+        tts_key = (self.tts_shortcut_edit.text() or "F9").strip().lower()
+        image_key = (self.image_shortcut_edit.text() or "F10").strip().lower()
+        self.config_manager.set("shortcuts.global.tts", tts_key)
+        self.config_manager.set("shortcuts.global.image", image_key)
 
         # Ollama
         self.config_manager.set("ollama.base_url", self.ollama_url_edit.text())

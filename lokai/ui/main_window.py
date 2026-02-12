@@ -644,7 +644,12 @@ class MainWindow(QMainWindow):
         try:
             from lokai.core.global_shortcuts import GlobalShortcutHandler
 
-            self.global_shortcuts = GlobalShortcutHandler(self)
+            # Load shortcut settings from config
+            enabled_cfg = self.config_manager.get("shortcuts.global.enabled", True)
+            tts_key = self.config_manager.get("shortcuts.global.tts", "f9")
+            image_key = self.config_manager.get("shortcuts.global.image", "f10")
+
+            self.global_shortcuts = GlobalShortcutHandler(self, tts_key, image_key)
             self.global_shortcuts.set_callbacks(
                 self.on_text_selected_for_tts, self.on_text_selected_for_image
             )
@@ -656,10 +661,10 @@ class MainWindow(QMainWindow):
                 self.on_text_selected_for_image
             )
 
-            # Enable global shortcuts
-            if self.global_shortcuts.enable():
+            # Enable global shortcuts (if enabled in settings)
+            if enabled_cfg and self.global_shortcuts.enable():
                 self.status_bar.showMessage(
-                    "Global shortcuts enabled: F9 (TTS), F10 (Image)",
+                    f"Global shortcuts enabled: {tts_key.upper()} (TTS), {image_key.upper()} (Image)",
                     5000,
                 )
         except Exception as e:
@@ -1662,6 +1667,33 @@ class MainWindow(QMainWindow):
 
             # Reload embedding components if RAG settings changed
             self._reload_embedding_components()
+
+            # Reconfigure global shortcuts according to new settings
+            try:
+                enabled_cfg = self.config_manager.get(
+                    "shortcuts.global.enabled", True
+                )
+                tts_key = self.config_manager.get(
+                    "shortcuts.global.tts", "f9"
+                )
+                image_key = self.config_manager.get(
+                    "shortcuts.global.image", "f10"
+                )
+                if hasattr(self, "global_shortcuts") and self.global_shortcuts:
+                    self.global_shortcuts.update_hotkeys(
+                        tts_key, image_key, enabled_cfg
+                    )
+                    if enabled_cfg:
+                        self.status_bar.showMessage(
+                            f"Global shortcuts enabled: {tts_key.upper()} (TTS), {image_key.upper()} (Image)",
+                            5000,
+                        )
+                    else:
+                        self.status_bar.showMessage(
+                            "Global shortcuts disabled", 5000
+                        )
+            except Exception as e:
+                print(f"Error reconfiguring global shortcuts after settings: {e}")
 
             self.status_bar.showMessage("Settings saved")
 
