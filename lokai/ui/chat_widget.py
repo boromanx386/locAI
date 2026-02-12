@@ -473,6 +473,9 @@ class ChatBubble(QFrame):
         if not text:
             return ""
 
+        # Link color: visible on user (blue) vs assistant (dark) bubble
+        link_color = "#FFFFFF" if self.is_user else "#4A9EFF"
+
         # Escape HTML first
         html = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
@@ -512,7 +515,7 @@ class ChatBubble(QFrame):
 
             return (
                 f'<a href="{url}" '
-                'style="color: #4A9EFF; text-decoration: underline;">'
+                f'style="color: {link_color}; text-decoration: underline;">'
                 f"{link_text}</a>"
             )
 
@@ -529,7 +532,7 @@ class ChatBubble(QFrame):
                 url = url[:-1]
             return (
                 f'<a href="{url}" '
-                'style="color: #4A9EFF; text-decoration: underline;">'
+                f'style="color: {link_color}; text-decoration: underline;">'
                 f"{url}</a>"
             )
 
@@ -2214,28 +2217,26 @@ class ChatWidget(QWidget):
                 )
 
     def _on_voice_transcription(self, text: str):
-        """Handle voice transcription ready."""
-        if text.strip():
-            # Get current text from input field
-            current_text = self.input_field.toPlainText()
-            
-            # Add transcription to existing text (don't replace)
-            if current_text.strip():
-                # If there's existing text, add space and new transcription
-                self.input_field.setPlainText(f"{current_text} {text.strip()}")
-            else:
-                # If input is empty, just set the transcription
-                self.input_field.setPlainText(text.strip())
-            
-            # Focus input field and ensure cursor visible after inserting text
-            self.input_field.setFocus()
-            self._ensure_input_cursor_visible()
+        """Handle voice transcription ready. Inserts text at current cursor position in chat input."""
+        if not text.strip():
+            return
+        cursor = self.input_field.textCursor()
+        insert_text = text.strip()
+        # Add space before if cursor is mid-text and previous character is not whitespace
+        pos = cursor.position()
+        if pos > 0:
+            current = self.input_field.toPlainText()
+            if current and pos <= len(current) and not current[pos - 1].isspace():
+                insert_text = " " + insert_text
+        cursor.insertText(insert_text)
+        self.input_field.setTextCursor(cursor)
+        self.input_field.setFocus()
+        self._ensure_input_cursor_visible()
 
-            # Auto-send disabled - user must press Enter or Send button to confirm
-            # This allows reviewing/editing the transcription before sending
-            auto_send = False
-            if auto_send:
-                self.send_message()
+        # Auto-send disabled - user must press Enter or Send button to confirm
+        auto_send = False
+        if auto_send:
+            self.send_message()
 
     def _on_voice_error(self, error: str):
         """Handle voice input error."""
