@@ -255,6 +255,8 @@ class ChatBubble(QFrame):
         self.audio_path = audio_path
         self.message_index = message_index
         self.message_role = "user" if is_user else "assistant"
+        # Throttle streaming UI updates (timer created when label exists in add_text)
+        self._stream_refresh_timer = None
 
         self.init_ui()
 
@@ -568,7 +570,7 @@ class ChatBubble(QFrame):
         return html
 
     def add_text(self, text: str):
-        """Add text to bubble (for streaming)."""
+        """Add text to bubble (for streaming). Throttles setHtml to avoid UI freeze on long responses."""
         self.current_text += text
         # Create label if it doesn't exist
         if not hasattr(self, "label") or self.label is None:
@@ -621,11 +623,26 @@ class ChatBubble(QFrame):
             if layout:
                 layout.addWidget(self.label)
         else:
-            self.label.setHtml(self._format_markdown(self.current_text))
-            # Update height after setting new content
-            QTimer.singleShot(0, self._update_text_height)
-            # Ensure text stays at top (no scrolling)
-            QTimer.singleShot(10, lambda: self.label.verticalScrollBar().setValue(0))
+            # Throttle: refresh at most every 50ms to avoid blocking UI on long streams
+            if self._stream_refresh_timer is None:
+                self._stream_refresh_timer = QTimer(self)
+                self._stream_refresh_timer.setSingleShot(True)
+                self._stream_refresh_timer.timeout.connect(self._flush_stream_display)
+            if not self._stream_refresh_timer.isActive():
+                self._stream_refresh_timer.start(50)
+    def _flush_stream_display(self):
+        """Apply current_text to label (throttled streaming refresh)."""
+        if not hasattr(self, "label") or self.label is None:
+            return
+        self.label.setHtml(self._format_markdown(self.current_text))
+        QTimer.singleShot(0, self._update_text_height)
+        QTimer.singleShot(10, lambda: self.label.verticalScrollBar().setValue(0))
+
+    def flush_display(self):
+        """Flush pending streaming content to label immediately (call when stream ends)."""
+        if self._stream_refresh_timer is not None and self._stream_refresh_timer.isActive():
+            self._stream_refresh_timer.stop()
+        self._flush_stream_display()
 
     def set_text(self, text: str):
         """Set complete text."""

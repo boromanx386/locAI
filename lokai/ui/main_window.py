@@ -30,6 +30,7 @@ from lokai.ui.status_panel import StatusPanel
 from lokai.ui.chat_widget import ChatWidget
 from lokai.ui.settings_dialog import SettingsDialog
 from lokai.ui.debug_dialog import DebugDialog
+from lokai.ui.system_monitor_widget import SystemMonitorWidget
 from lokai.core.ollama_detector import OllamaDetector
 from lokai.core.ollama_client import OllamaClient
 from lokai.core.image_generator import ImageGenerator
@@ -121,6 +122,26 @@ class MainWindow(QMainWindow):
         # Track last status check to avoid redundant checks
         self._last_status_check = None
         self._status_check_interval = 30000  # Only check if 30+ seconds passed
+
+        # Stream chunk batching: avoid flooding UI with per-token updates (prevents freeze on long responses)
+        self._chunk_buffer = []
+        self._chunk_flush_timer = QTimer(self)
+        self._chunk_flush_timer.setSingleShot(True)
+        self._chunk_flush_timer.timeout.connect(self._flush_chunk_buffer)
+
+    def _flush_chunk_buffer(self):
+        """Flush buffered stream chunks to chat widget (batch update to avoid UI freeze)."""
+        if not self._chunk_buffer:
+            return
+        text = "".join(self._chunk_buffer)
+        self._chunk_buffer.clear()
+        if not text:
+            return
+        # Bubble is created inside append_ai_chunk on first call – ensure message is started
+        if self.chat_widget.current_ai_bubble is None:
+            model = self.status_panel.get_selected_model()
+            self.chat_widget.start_ai_message(model if model else None)
+        self.chat_widget.append_ai_chunk(text)
 
     def _init_embedding_components(self):
         """Initialize embedding components delayed to speed up startup."""
@@ -368,6 +389,20 @@ class MainWindow(QMainWindow):
                     self.config_manager.get(
                         "ollama.conversation.max_history_messages", 20
                     ),
+                ),
+            }
+        else:
+            # Global defaults when no model or no conversation key
+            self._conversation_settings_cache = {
+                "use_explicit_history": self.config_manager.get(
+                    "ollama.conversation.use_explicit_history", False
+                ),
+                "system_prompt": self.config_manager.get(
+                    "ollama.conversation.system_prompt",
+                    "You are a helpful AI assistant.",
+                ),
+                "max_history": self.config_manager.get(
+                    "ollama.conversation.max_history_messages", 20
                 ),
             }
 
@@ -689,6 +724,8 @@ class MainWindow(QMainWindow):
 
         # Create menu bar
         self.create_menu_bar()
+        # System monitor in header (right-aligned)
+        self.menuBar().setCornerWidget(SystemMonitorWidget(self))
 
         # Create status bar
         self.create_status_bar()
@@ -1201,8 +1238,25 @@ class MainWindow(QMainWindow):
         # Manual-only semantic memory: never auto-embed user messages.
 
         # Use cached config values (much faster than reading from file each time)
+        if self._llm_params_cache is None or self._conversation_settings_cache is None:
+            model = self.status_panel.get_selected_model() or self.config_manager.get(
+                "ollama.default_model", "llama3.2"
+            )
+            self._cache_config_values(model)
         llm_params = self._llm_params_cache.copy()
         conv_settings = self._conversation_settings_cache
+        if conv_settings is None:
+            conv_settings = {
+                "use_explicit_history": self.config_manager.get(
+                    "ollama.conversation.use_explicit_history", False
+                ),
+                "system_prompt": self.config_manager.get(
+                    "ollama.conversation.system_prompt", "You are a helpful AI assistant."
+                ),
+                "max_history": self.config_manager.get(
+                    "ollama.conversation.max_history_messages", 20
+                ),
+            }
 
         # Build prompt based on conversation settings
         use_explicit_history = conv_settings["use_explicit_history"]
@@ -1414,6 +1468,9 @@ class MainWindow(QMainWindow):
             worker.chunk_received.connect(self._on_chunk_received)
             worker.finished.connect(lambda content: self._on_tools_response_finished(content))
             worker.error_occurred.connect(self._on_response_error)
+            # Clear stream chunk buffer for this request
+            self._chunk_buffer.clear()
+            self._chunk_flush_timer.stop()
             def on_tool_executed(name: str, result: str):
                 if name:
                     self.chat_widget.update_tool_status(name)
@@ -1432,7 +1489,10 @@ class MainWindow(QMainWindow):
             worker.chunk_received.connect(self._on_chunk_received)
             worker.finished.connect(self._on_response_finished)
             worker.error_occurred.connect(self._on_response_error)
-        
+
+        # Clear stream chunk buffer for this request so previous run doesn't leak
+        self._chunk_buffer.clear()
+        self._chunk_flush_timer.stop()
         # Store worker reference to prevent garbage collection
         self.current_worker = worker
         worker.finished.connect(lambda: setattr(self, "current_worker", None))
@@ -1709,6 +1769,18 @@ class MainWindow(QMainWindow):
 
         # Get cached config values
         conv_settings = self._conversation_settings_cache
+        if conv_settings is None:
+            model = self.status_panel.get_selected_model() or self.config_manager.get(
+                "ollama.default_model", "llama3.2"
+            )
+            self._cache_config_values(model)
+            conv_settings = self._conversation_settings_cache or {}
+        if not conv_settings:
+            conv_settings = {
+                "system_prompt": "You are a helpful AI assistant.",
+                "max_history": 20,
+                "use_explicit_history": False,
+            }
 
         system_prompt = conv_settings["system_prompt"]
         max_history = conv_settings["max_history"]
@@ -1866,20 +1938,20 @@ class MainWindow(QMainWindow):
         )
 
     def _on_chunk_received(self, chunk: str):
-        """Handle chunk received from worker."""
+        """Handle chunk received from worker (batched to avoid UI freeze on long streams)."""
         try:
-            # Status indicator and typing indicator already set in start_ai_message()
-            # Just create bubble on first chunk if it doesn't exist (should already exist)
+            if not chunk:
+                return
+            # On first chunk ensure bubble exists (flush any pending buffer so order is correct)
             if self.chat_widget.current_ai_bubble is None:
-                # Fallback: create message if somehow not created
+                self._flush_chunk_buffer()
                 model = self.status_panel.get_selected_model()
                 self.chat_widget.start_ai_message(model if model else None)
-            # Append chunk (only if non-empty - but allow whitespace like newlines)
-            if chunk:
-                self.chat_widget.append_ai_chunk(chunk)
+            self._chunk_buffer.append(chunk)
+            if not self._chunk_flush_timer.isActive():
+                self._chunk_flush_timer.start(40)  # Batch updates ~25/sec max
         except Exception as e:
             print(f"Error in _on_chunk_received: {e}")
-            # Don't print full traceback in production - too verbose
 
     def _embed_message_async(self, message: Dict, index: int):
         """Embed message in background (non-blocking)."""
@@ -2101,6 +2173,11 @@ class MainWindow(QMainWindow):
     def _on_response_finished(self, new_context):
         """Handle response completion."""
         try:
+            self._flush_chunk_buffer()
+            if self.chat_widget.current_ai_bubble is not None and hasattr(
+                self.chat_widget.current_ai_bubble, "flush_display"
+            ):
+                self.chat_widget.current_ai_bubble.flush_display()
             self.current_context = new_context
 
             # Unload model after response to free GPU memory for next request
@@ -2193,6 +2270,11 @@ class MainWindow(QMainWindow):
     def _on_tools_response_finished(self, content: str):
         """Handle tools response completion (from ChatToolsWorker)."""
         try:
+            self._flush_chunk_buffer()
+            if self.chat_widget.current_ai_bubble is not None and hasattr(
+                self.chat_widget.current_ai_bubble, "flush_display"
+            ):
+                self.chat_widget.current_ai_bubble.flush_display()
             # ChatToolsWorker doesn't use context, so set to None
             self.current_context = None
 
@@ -2254,6 +2336,11 @@ class MainWindow(QMainWindow):
     def _on_response_error(self, error: str):
         """Handle response error."""
         try:
+            self._flush_chunk_buffer()
+            if self.chat_widget.current_ai_bubble is not None and hasattr(
+                self.chat_widget.current_ai_bubble, "flush_display"
+            ):
+                self.chat_widget.current_ai_bubble.flush_display()
             # Create bubble if it doesn't exist
             if self.chat_widget.current_ai_bubble is None:
                 model = self.status_panel.get_selected_model()
@@ -2261,6 +2348,10 @@ class MainWindow(QMainWindow):
             # Show error message
             error_msg = f"[Error: {error}]"
             self.chat_widget.append_ai_chunk(error_msg)
+            if self.chat_widget.current_ai_bubble is not None and hasattr(
+                self.chat_widget.current_ai_bubble, "flush_display"
+            ):
+                self.chat_widget.current_ai_bubble.flush_display()
             self.chat_widget.finish_ai_message()
             # Hide status indicator on error
             if hasattr(self.chat_widget, "status_indicator"):
