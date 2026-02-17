@@ -46,11 +46,11 @@ import platform
 
 
 class ChatInputField(QTextEdit):
-    """Custom QTextEdit that handles Enter for send and Shift+Enter for new line."""
+    """Custom QTextEdit that handles Enter for send and Shift+Enter for new line.
+    Does not accept file drops; drop is on the input frame so the cursor stays ok."""
 
     send_requested = Signal()  # Signal emitted when Enter is pressed (without Shift)
     mode_change_requested = Signal()  # Signal emitted when Shift+Tab is pressed
-    files_dropped = Signal(list)  # Signal(list of local file paths) when files dropped on input
 
     def keyPressEvent(self, event: QKeyEvent):
         """Handle key press events."""
@@ -76,30 +76,7 @@ class ChatInputField(QTextEdit):
             # All other keys: default behavior
             super().keyPressEvent(event)
 
-    def dragEnterEvent(self, event: QDragEnterEvent):
-        """Accept drops of local files (images or text/code attachments)."""
-        if event.mimeData().hasUrls():
-            urls = event.mimeData().urls()
-            for url in urls:
-                path = url.toLocalFile()
-                if path and path.strip():
-                    event.acceptProposedAction()
-                    return
-        event.ignore()
-
-    def dropEvent(self, event: QDropEvent):
-        """Emit files_dropped with local file paths when files are dropped."""
-        if event.mimeData().hasUrls():
-            paths = []
-            for url in event.mimeData().urls():
-                path = url.toLocalFile()
-                if path and path.strip() and os.path.isfile(path):
-                    paths.append(path)
-            if paths:
-                self.files_dropped.emit(paths)
-                event.acceptProposedAction()
-                return
-        event.ignore()
+    # No dragEnterEvent/dropEvent: file drop is on the input frame (parent) so cursor does not break
 
 
 class ChatBubbleTextEdit(QTextEdit):
@@ -1039,9 +1016,13 @@ class ChatWidget(QWidget):
 
         # Attachments row (chips above input) – hidden when empty
         self.attachments_container = QWidget()
+        self.attachments_container.setFixedHeight(44)
+        self.attachments_container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self.attachments_layout = QHBoxLayout()
         self.attachments_layout.setContentsMargins(12, 4, 12, 0)
         self.attachments_layout.setSpacing(6)
+        self.attachments_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        self.attachments_layout.addStretch(1)  # at end so chips stay left
         self.attachments_container.setLayout(self.attachments_layout)
         self.attachments_container.hide()
         input_frame_v.addWidget(self.attachments_container)
@@ -1072,14 +1053,13 @@ class ChatWidget(QWidget):
         )
         # Optimize for better performance
         self.input_field.setAcceptRichText(False)  # Faster without rich text
-        # Enable drag and drop for input field
-        self.input_field.setAcceptDrops(True)
+        # No drop on input field: drop handled in eventFilter so cursor never breaks
+        self.input_field.setAcceptDrops(False)
+        self.input_field.installEventFilter(self)
         # Connect Enter key to send message
         self.input_field.send_requested.connect(self.send_message)
         # Connect Shift+Tab to cycle mode
         self.input_field.mode_change_requested.connect(self.cycle_mode)
-        # Connect file drop on input -> route to image upload or attachments
-        self.input_field.files_dropped.connect(self._on_files_dropped)
         input_layout.addWidget(self.input_field, stretch=1)
 
         # Voice input button (STT) - placed before prompt button
@@ -1215,6 +1195,9 @@ class ChatWidget(QWidget):
 
         input_frame_v.addLayout(input_layout)
         self.input_frame.setLayout(input_frame_v)
+        # Accept file drops on the frame (not on input field) so cursor stays ok
+        self.input_frame.setAcceptDrops(True)
+        self.input_frame.installEventFilter(self)
         layout.addWidget(self.input_frame)
 
         # Voice input widget (initially hidden)
@@ -2000,6 +1983,26 @@ class ChatWidget(QWidget):
         self.current_ai_bubble = None
         self.add_welcome_message()
 
+    def eventFilter(self, obj, event):
+        """Handle file drop on input_frame or input_field so drop never runs in input (cursor stays ok)."""
+        if obj == self.input_frame or obj == self.input_field:
+            if event.type() == QEvent.Type.DragEnter:
+                if event.mimeData().hasUrls():
+                    event.acceptProposedAction()
+                    return True
+            elif event.type() == QEvent.Type.Drop:
+                if event.mimeData().hasUrls():
+                    paths = []
+                    for url in event.mimeData().urls():
+                        path = url.toLocalFile()
+                        if path and path.strip() and os.path.isfile(path):
+                            paths.append(path)
+                    if paths:
+                        self._on_files_dropped(paths)
+                        event.acceptProposedAction()
+                    return True
+        return super().eventFilter(obj, event)
+
     def dragEnterEvent(self, event: QDragEnterEvent):
         """Handle drag enter event for image drop."""
         if event.mimeData().hasUrls():
@@ -2088,6 +2091,8 @@ class ChatWidget(QWidget):
     def _make_attachment_chip(self, path: str, name: str, size_bytes: int) -> QWidget:
         """Build a chip widget: filename + size + remove button."""
         chip = QFrame()
+        chip.setFixedHeight(36)
+        chip.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
         chip.setStyleSheet("""
             QFrame {
                 background: rgba(74, 158, 255, 0.2);
@@ -2102,21 +2107,27 @@ class ChatWidget(QWidget):
         label = QLabel(f"📎 {name} ({format_file_size(size_bytes)})")
         label.setStyleSheet("color: #E0E0E0; font-size: 12px;")
         label.setToolTip(path)
-        chip_layout.addWidget(label)
+        label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        chip_layout.addWidget(label, 1)
         remove_btn = QPushButton("×")
-        remove_btn.setFixedSize(20, 20)
+        remove_btn.setFixedSize(22, 22)
         remove_btn.setStyleSheet("""
             QPushButton {
-                background: transparent;
-                color: #A0A0A0;
-                border: none;
-                font-size: 14px;
+                background: rgba(120, 120, 120, 0.4);
+                color: #FFFFFF;
+                border: 1px solid rgba(255,255,255,0.3);
+                border-radius: 4px;
+                font-size: 16px;
+                font-weight: bold;
             }
-            QPushButton:hover { color: #FF6B6B; }
+            QPushButton:hover {
+                background: #FF6B6B;
+                color: #FFFFFF;
+            }
         """)
         remove_btn.setToolTip("Remove attachment")
         remove_btn.clicked.connect(lambda: self._remove_attachment(path))
-        chip_layout.addWidget(remove_btn)
+        chip_layout.addWidget(remove_btn, 0)
         chip.setLayout(chip_layout)
         return chip
 
@@ -2167,7 +2178,8 @@ class ChatWidget(QWidget):
             name = os.path.basename(p)
             self.pending_attachments.append({"path": p, "name": name, "size": size})
             chip = self._make_attachment_chip(p, name, size)
-            self.attachments_layout.addWidget(chip)
+            # insert before the stretch so chips stay left and don't fill the row
+            self.attachments_layout.insertWidget(self.attachments_layout.count() - 1, chip)
             self._attachment_chips[p] = chip
         if skipped:
             QMessageBox.warning(
