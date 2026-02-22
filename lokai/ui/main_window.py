@@ -3345,7 +3345,6 @@ class OllamaWorker(QThread):
                 context=self.context,
                 callback=on_chunk,
                 thinking_callback=on_thinking_chunk,
-                think=True,
                 images=self.images,
                 num_ctx=self.llm_params.get("num_ctx"),
                 temperature=self.llm_params.get("temperature"),
@@ -3432,7 +3431,6 @@ class ChatToolsWorker(QThread):
                     stream=True,
                     callback=on_chunk,
                     thinking_callback=on_thinking_chunk,
-                    think=True,
                     request_id=self.request_id,
                 )
                 

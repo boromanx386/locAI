@@ -413,6 +413,12 @@ class ChatBubble(QFrame):
             )  # Dark shadow for AI (semi-transparent black)
         self.setGraphicsEffect(shadow)
 
+    def resizeEvent(self, event):
+        """Keep text areas sized correctly when bubble width changes."""
+        super().resizeEvent(event)
+        QTimer.singleShot(0, self._update_text_height)
+        QTimer.singleShot(0, self._update_thinking_height)
+
     def _update_text_height(self):
         """Update QTextEdit height to match content exactly."""
         if not hasattr(self, "label") or not self.label:
@@ -667,9 +673,9 @@ class ChatBubble(QFrame):
         self.thinking_text_view = QTextEdit()
         self.thinking_text_view.setReadOnly(True)
         self.thinking_text_view.setFrameShape(QTextEdit.Shape.NoFrame)
-        self.thinking_text_view.setMinimumHeight(70)
-        self.thinking_text_view.setMaximumHeight(150)
-        self.thinking_text_view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.thinking_text_view.setMinimumHeight(24)
+        self.thinking_text_view.setMaximumHeight(2000)
+        self.thinking_text_view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.thinking_text_view.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
@@ -690,6 +696,7 @@ class ChatBubble(QFrame):
         self.thinking_container.setLayout(thinking_layout)
         self.layout().insertWidget(0, self.thinking_container)
         self._refresh_thinking_visibility()
+        QTimer.singleShot(0, self._update_thinking_height)
 
     def _toggle_thinking_collapsed(self):
         """Toggle thinking section collapsed/expanded."""
@@ -715,14 +722,26 @@ class ChatBubble(QFrame):
         self.thinking_text += text
         if self.thinking_text_view is not None:
             self.thinking_text_view.setPlainText(self.thinking_text)
-            scrollbar = self.thinking_text_view.verticalScrollBar()
-            scrollbar.setValue(scrollbar.maximum())
+            self._update_thinking_height()
         self._refresh_thinking_visibility()
 
     def set_thinking_collapsed(self, collapsed: bool):
         """Set thinking section collapsed state."""
         self.thinking_collapsed = collapsed
         self._refresh_thinking_visibility()
+
+    def _update_thinking_height(self):
+        """Auto-size thinking panel to fit current text content."""
+        if self.thinking_text_view is None or self.thinking_collapsed:
+            return
+        doc = self.thinking_text_view.document()
+        text_width = self.thinking_text_view.viewport().width()
+        if text_width > 0:
+            doc.setTextWidth(text_width)
+        doc_height = doc.size().height()
+        new_height = max(24, int(doc_height) + 14)
+        self.thinking_text_view.setMinimumHeight(new_height)
+        self.thinking_text_view.setMaximumHeight(new_height)
 
     def _show_bubble_context_menu(self, position):
         """Show context menu for bubble text selection."""
