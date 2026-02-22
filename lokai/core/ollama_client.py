@@ -60,6 +60,7 @@ class OllamaClient:
         prompt: str,
         context: Optional[List[int]] = None,
         callback: Optional[Callable[[str], None]] = None,
+        thinking_callback: Optional[Callable[[str], None]] = None,
         images: Optional[List[str]] = None,
         num_ctx: Optional[int] = None,
         temperature: Optional[float] = None,
@@ -69,6 +70,7 @@ class OllamaClient:
         num_predict: Optional[int] = None,
         seed: Optional[int] = None,
         tools: Optional[List[dict]] = None,
+        think: Optional[bool] = None,
         request_id: Optional[str] = None,
     ) -> Tuple[str, Optional[List[int]]]:
         """
@@ -79,6 +81,7 @@ class OllamaClient:
             prompt: User prompt
             context: Previous conversation context
             callback: Optional callback function for streaming chunks
+            thinking_callback: Optional callback function for thinking chunks
             images: Optional list of base64-encoded images (for vision models)
             num_ctx: Context window size (optional)
             temperature: Temperature for sampling (optional)
@@ -88,6 +91,7 @@ class OllamaClient:
             num_predict: Maximum tokens to generate, -1 for unlimited (optional)
             seed: Seed for reproducibility, -1 for random (optional)
             tools: Optional list of tools for function calling (optional)
+            think: Enable/disable model thinking output when supported (optional)
             request_id: Optional request ID for cancellation tracking
 
         Returns:
@@ -108,6 +112,8 @@ class OllamaClient:
                 "prompt": prompt,
                 "stream": True,
             }
+            if think is not None:
+                payload["think"] = think
 
             # Add context if provided (check like in old code)
             if context is not None and context:
@@ -179,6 +185,11 @@ class OllamaClient:
                                 full_response += chunk
                                 if callback:
                                     callback(chunk)
+                            # Handle thinking chunks (some models stream reasoning separately)
+                            if "thinking" in data and thinking_callback:
+                                thinking_chunk = data["thinking"]
+                                if thinking_chunk:
+                                    thinking_callback(thinking_chunk)
 
                             # Store context for next request
                             if "context" in data:
@@ -329,6 +340,8 @@ class OllamaClient:
         seed: Optional[int] = None,
         stream: bool = False,
         callback: Optional[Callable[[str], None]] = None,
+        thinking_callback: Optional[Callable[[str], None]] = None,
+        think: Optional[bool] = None,
         request_id: Optional[str] = None,
     ) -> dict:
         """
@@ -347,6 +360,8 @@ class OllamaClient:
             seed: Seed for reproducibility (optional)
             stream: Enable streaming (optional)
             callback: Callback for streaming chunks (optional)
+            thinking_callback: Callback for thinking chunks (optional)
+            think: Enable/disable model thinking output when supported (optional)
             request_id: Optional request ID for cancellation tracking
             
         Returns:
@@ -367,6 +382,8 @@ class OllamaClient:
                 "messages": messages,
                 "stream": stream,
             }
+            if think is not None:
+                payload["think"] = think
             
             # Build options object
             options = {}
@@ -424,6 +441,12 @@ class OllamaClient:
                                 
                                 if "message" in data:
                                     msg = data["message"]
+                                    # Thinking chunks can arrive either in message.thinking or top-level thinking
+                                    thinking_chunk = msg.get("thinking", "")
+                                    if not thinking_chunk and "thinking" in data:
+                                        thinking_chunk = data.get("thinking", "")
+                                    if thinking_chunk and thinking_callback:
+                                        thinking_callback(thinking_chunk)
                                     
                                     # Content chunks
                                     if "content" in msg and msg["content"]:

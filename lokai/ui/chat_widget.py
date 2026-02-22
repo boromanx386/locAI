@@ -234,6 +234,11 @@ class ChatBubble(QFrame):
         self.message_role = "user" if is_user else "assistant"
         # Throttle streaming UI updates (timer created when label exists in add_text)
         self._stream_refresh_timer = None
+        self.thinking_text = ""
+        self.thinking_collapsed = False
+        self.thinking_container = None
+        self.thinking_header_btn = None
+        self.thinking_text_view = None
 
         self.init_ui()
 
@@ -628,6 +633,96 @@ class ChatBubble(QFrame):
             self.label.setHtml(self._format_markdown(text))
             # Update height after setting new content
             QTimer.singleShot(0, self._update_text_height)
+
+    def _ensure_thinking_section(self):
+        """Create thinking UI section lazily for assistant bubbles."""
+        if self.is_user or self.thinking_container is not None:
+            return
+
+        self.thinking_container = QFrame()
+        thinking_layout = QVBoxLayout()
+        thinking_layout.setContentsMargins(0, 0, 0, 4)
+        thinking_layout.setSpacing(4)
+
+        self.thinking_header_btn = QPushButton("▼ Thinking")
+        self.thinking_header_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.thinking_header_btn.setFlat(True)
+        self.thinking_header_btn.setStyleSheet(
+            """
+            QPushButton {
+                color: #B8B8B8;
+                font-size: 12px;
+                text-align: left;
+                padding: 0px;
+                border: none;
+            }
+            QPushButton:hover {
+                color: #D0D0D0;
+            }
+        """
+        )
+        self.thinking_header_btn.clicked.connect(self._toggle_thinking_collapsed)
+        thinking_layout.addWidget(self.thinking_header_btn)
+
+        self.thinking_text_view = QTextEdit()
+        self.thinking_text_view.setReadOnly(True)
+        self.thinking_text_view.setFrameShape(QTextEdit.Shape.NoFrame)
+        self.thinking_text_view.setMinimumHeight(70)
+        self.thinking_text_view.setMaximumHeight(150)
+        self.thinking_text_view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.thinking_text_view.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.thinking_text_view.setStyleSheet(
+            """
+            QTextEdit {
+                background: rgba(0, 0, 0, 0.18);
+                color: #B8B8B8;
+                border: 1px solid #3A3A3A;
+                border-radius: 8px;
+                font-size: 12px;
+                padding: 6px 8px;
+            }
+        """
+        )
+        thinking_layout.addWidget(self.thinking_text_view)
+
+        self.thinking_container.setLayout(thinking_layout)
+        self.layout().insertWidget(0, self.thinking_container)
+        self._refresh_thinking_visibility()
+
+    def _toggle_thinking_collapsed(self):
+        """Toggle thinking section collapsed/expanded."""
+        self.set_thinking_collapsed(not self.thinking_collapsed)
+
+    def _refresh_thinking_visibility(self):
+        """Refresh thinking section UI visibility and header text."""
+        if self.thinking_container is None:
+            return
+        has_thinking = bool(self.thinking_text.strip())
+        self.thinking_container.setVisible(has_thinking)
+        if self.thinking_header_btn is not None:
+            arrow = "▶" if self.thinking_collapsed else "▼"
+            self.thinking_header_btn.setText(f"{arrow} Thinking")
+        if self.thinking_text_view is not None:
+            self.thinking_text_view.setVisible(not self.thinking_collapsed and has_thinking)
+
+    def add_thinking_text(self, text: str):
+        """Append thinking text in assistant bubble."""
+        if self.is_user or not text:
+            return
+        self._ensure_thinking_section()
+        self.thinking_text += text
+        if self.thinking_text_view is not None:
+            self.thinking_text_view.setPlainText(self.thinking_text)
+            scrollbar = self.thinking_text_view.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
+        self._refresh_thinking_visibility()
+
+    def set_thinking_collapsed(self, collapsed: bool):
+        """Set thinking section collapsed state."""
+        self.thinking_collapsed = collapsed
+        self._refresh_thinking_visibility()
 
     def _show_bubble_context_menu(self, position):
         """Show context menu for bubble text selection."""
@@ -1248,7 +1343,7 @@ class ChatWidget(QWidget):
         Args:
             model_name: Optional name of the model being used
         """
-        # Show typing indicator instead of empty bubble
+        # Show typing indicator while waiting for first streamed token
         if self.typing_indicator is None:
             self.typing_indicator = TypingIndicator()
             self.messages_layout.insertWidget(
@@ -1268,7 +1363,7 @@ class ChatWidget(QWidget):
 
     def append_ai_chunk(self, chunk: str):
         """Append chunk to current AI message (streaming)."""
-        # Hide typing indicator and create bubble on first chunk
+        # Create AI bubble lazily if needed
         if self.current_ai_bubble is None:
             # Remove typing indicator if it exists
             if self.typing_indicator is not None:
@@ -1277,7 +1372,6 @@ class ChatWidget(QWidget):
                 self.typing_indicator.deleteLater()
                 self.typing_indicator = None
 
-            # Create AI bubble
             self.current_ai_bubble = ChatBubble("", is_user=False, message_index=-1)
             # Connect bubble signals to widget signals
             self.current_ai_bubble.text_selected_for_tts.connect(
@@ -1305,6 +1399,45 @@ class ChatWidget(QWidget):
         self.pending_scroll = True
         if not self.scroll_timer.isActive():
             self.scroll_timer.start(150)  # Scroll max every 150ms
+
+    def append_ai_thinking_chunk(self, chunk: str):
+        """Append thinking chunk to current AI message."""
+        if self.current_ai_bubble is None:
+            if self.typing_indicator is not None:
+                self.typing_indicator.stop()
+                self.messages_layout.removeWidget(self.typing_indicator)
+                self.typing_indicator.deleteLater()
+                self.typing_indicator = None
+            self.current_ai_bubble = ChatBubble("", is_user=False, message_index=-1)
+            self.current_ai_bubble.text_selected_for_tts.connect(
+                self.text_selected_for_tts.emit
+            )
+            self.current_ai_bubble.text_selected_for_image.connect(
+                self.text_selected_for_image.emit
+            )
+            self.current_ai_bubble.text_selected_for_audio.connect(
+                self.text_selected_for_audio.emit
+            )
+            self.current_ai_bubble.remember_selected_text.connect(
+                self.remember_selected_text.emit
+            )
+            self.current_ai_bubble.remember_message.connect(self.remember_message.emit)
+            self.current_ai_bubble.memory_stats_requested.connect(
+                self.memory_stats_requested.emit
+            )
+            self.messages_layout.insertWidget(
+                self.messages_layout.count() - 1, self.current_ai_bubble
+            )
+        if self.current_ai_bubble is not None:
+            self.current_ai_bubble.add_thinking_text(chunk)
+            self.pending_scroll = True
+            if not self.scroll_timer.isActive():
+                self.scroll_timer.start(150)
+
+    def collapse_ai_thinking(self):
+        """Collapse thinking section in current AI bubble."""
+        if self.current_ai_bubble is not None:
+            self.current_ai_bubble.set_thinking_collapsed(True)
 
     def update_tool_status(self, tool_name: str):
         """Update status indicator to show tool being executed."""
@@ -1334,7 +1467,6 @@ class ChatWidget(QWidget):
             self.messages_layout.removeWidget(self.typing_indicator)
             self.typing_indicator.deleteLater()
             self.typing_indicator = None
-
         self.current_ai_bubble = None
         self.scroll_to_bottom()
         # Hide status indicator

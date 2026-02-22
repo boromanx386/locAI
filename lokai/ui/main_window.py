@@ -128,6 +128,12 @@ class MainWindow(QMainWindow):
         self._chunk_flush_timer = QTimer(self)
         self._chunk_flush_timer.setSingleShot(True)
         self._chunk_flush_timer.timeout.connect(self._flush_chunk_buffer)
+        self._thinking_buffer = []
+        self._thinking_flush_timer = QTimer(self)
+        self._thinking_flush_timer.setSingleShot(True)
+        self._thinking_flush_timer.timeout.connect(self._flush_thinking_buffer)
+        self._response_started_for_request = False
+        self._stream_active = False
 
     def _flush_chunk_buffer(self):
         """Flush buffered stream chunks to chat widget (batch update to avoid UI freeze)."""
@@ -142,6 +148,19 @@ class MainWindow(QMainWindow):
             model = self.status_panel.get_selected_model()
             self.chat_widget.start_ai_message(model if model else None)
         self.chat_widget.append_ai_chunk(text)
+
+    def _flush_thinking_buffer(self):
+        """Flush buffered thinking chunks to chat widget."""
+        if not self._thinking_buffer:
+            return
+        text = "".join(self._thinking_buffer)
+        self._thinking_buffer.clear()
+        if not text:
+            return
+        if self.chat_widget.current_ai_bubble is None:
+            model = self.status_panel.get_selected_model()
+            self.chat_widget.start_ai_message(model if model else None)
+        self.chat_widget.append_ai_thinking_chunk(text)
 
     def _init_embedding_components(self):
         """Initialize embedding components delayed to speed up startup."""
@@ -1020,6 +1039,21 @@ class MainWindow(QMainWindow):
                         self.chat_widget.current_ai_bubble = None
                     except:
                         pass
+                # Reset streaming/thinking state on forced stop
+                self._chunk_buffer.clear()
+                self._chunk_flush_timer.stop()
+                self._thinking_buffer.clear()
+                self._thinking_flush_timer.stop()
+                self._response_started_for_request = False
+                self._stream_active = False
+                if hasattr(self.chat_widget, "typing_indicator") and self.chat_widget.typing_indicator is not None:
+                    try:
+                        self.chat_widget.typing_indicator.stop()
+                        self.chat_widget.messages_layout.removeWidget(self.chat_widget.typing_indicator)
+                        self.chat_widget.typing_indicator.deleteLater()
+                        self.chat_widget.typing_indicator = None
+                    except Exception:
+                        pass
 
         # Stop Image Generation worker if running
         if (
@@ -1466,6 +1500,7 @@ class MainWindow(QMainWindow):
             )
             # Connect signals - create bubble on first chunk
             worker.chunk_received.connect(self._on_chunk_received)
+            worker.thinking_chunk_received.connect(self._on_thinking_chunk_received)
             worker.finished.connect(lambda content: self._on_tools_response_finished(content))
             worker.error_occurred.connect(self._on_response_error)
             # Clear stream chunk buffer for this request
@@ -1487,12 +1522,17 @@ class MainWindow(QMainWindow):
             )
             # Connect signals - create bubble on first chunk
             worker.chunk_received.connect(self._on_chunk_received)
+            worker.thinking_chunk_received.connect(self._on_thinking_chunk_received)
             worker.finished.connect(self._on_response_finished)
             worker.error_occurred.connect(self._on_response_error)
 
         # Clear stream chunk buffer for this request so previous run doesn't leak
         self._chunk_buffer.clear()
         self._chunk_flush_timer.stop()
+        self._thinking_buffer.clear()
+        self._thinking_flush_timer.stop()
+        self._response_started_for_request = False
+        self._stream_active = True
         # Store worker reference to prevent garbage collection
         self.current_worker = worker
         worker.finished.connect(lambda: setattr(self, "current_worker", None))
@@ -1940,8 +1980,14 @@ class MainWindow(QMainWindow):
     def _on_chunk_received(self, chunk: str):
         """Handle chunk received from worker (batched to avoid UI freeze on long streams)."""
         try:
+            if not self._stream_active:
+                return
             if not chunk:
                 return
+            if not self._response_started_for_request:
+                self._response_started_for_request = True
+                self._flush_thinking_buffer()
+                self.chat_widget.collapse_ai_thinking()
             # On first chunk ensure bubble exists (flush any pending buffer so order is correct)
             if self.chat_widget.current_ai_bubble is None:
                 self._flush_chunk_buffer()
@@ -1952,6 +1998,19 @@ class MainWindow(QMainWindow):
                 self._chunk_flush_timer.start(40)  # Batch updates ~25/sec max
         except Exception as e:
             print(f"Error in _on_chunk_received: {e}")
+
+    def _on_thinking_chunk_received(self, chunk: str):
+        """Handle thinking chunk received from worker."""
+        try:
+            if not self._stream_active:
+                return
+            if not chunk or self._response_started_for_request:
+                return
+            self._thinking_buffer.append(chunk)
+            if not self._thinking_flush_timer.isActive():
+                self._thinking_flush_timer.start(40)
+        except Exception as e:
+            print(f"Error in _on_thinking_chunk_received: {e}")
 
     def _embed_message_async(self, message: Dict, index: int):
         """Embed message in background (non-blocking)."""
@@ -2173,6 +2232,10 @@ class MainWindow(QMainWindow):
     def _on_response_finished(self, new_context):
         """Handle response completion."""
         try:
+            if not self._stream_active:
+                return
+            self._flush_thinking_buffer()
+            self._thinking_flush_timer.stop()
             self._flush_chunk_buffer()
             if self.chat_widget.current_ai_bubble is not None and hasattr(
                 self.chat_widget.current_ai_bubble, "flush_display"
@@ -2259,6 +2322,8 @@ class MainWindow(QMainWindow):
                 self.chat_widget.finish_ai_message()
             # Re-enable send button
             self.chat_widget.set_send_enabled(True)
+            self._response_started_for_request = False
+            self._stream_active = False
         except Exception as e:
             import traceback
             error_msg = f"Error handling response: {str(e)}"
@@ -2270,6 +2335,10 @@ class MainWindow(QMainWindow):
     def _on_tools_response_finished(self, content: str):
         """Handle tools response completion (from ChatToolsWorker)."""
         try:
+            if not self._stream_active:
+                return
+            self._flush_thinking_buffer()
+            self._thinking_flush_timer.stop()
             self._flush_chunk_buffer()
             if self.chat_widget.current_ai_bubble is not None and hasattr(
                 self.chat_widget.current_ai_bubble, "flush_display"
@@ -2324,6 +2393,8 @@ class MainWindow(QMainWindow):
             
             # Re-enable send button
             self.chat_widget.set_send_enabled(True)
+            self._response_started_for_request = False
+            self._stream_active = False
             
         except Exception as e:
             import traceback
@@ -2336,6 +2407,10 @@ class MainWindow(QMainWindow):
     def _on_response_error(self, error: str):
         """Handle response error."""
         try:
+            if not self._stream_active:
+                return
+            self._flush_thinking_buffer()
+            self._thinking_flush_timer.stop()
             self._flush_chunk_buffer()
             if self.chat_widget.current_ai_bubble is not None and hasattr(
                 self.chat_widget.current_ai_bubble, "flush_display"
@@ -2358,6 +2433,8 @@ class MainWindow(QMainWindow):
                 self.chat_widget.status_indicator.setVisible(False)
             # Re-enable send button
             self.chat_widget.set_send_enabled(True)
+            self._response_started_for_request = False
+            self._stream_active = False
         except Exception as e:
             print(f"Error in _on_response_error: {e}")
             import traceback
@@ -2370,6 +2447,8 @@ class MainWindow(QMainWindow):
                 pass
             # Re-enable send button even on error
             self.chat_widget.set_send_enabled(True)
+            self._response_started_for_request = False
+            self._stream_active = False
 
     def on_seed_lock_toggled(self, locked: bool):
         """Handle seed lock toggle from chat widget."""
@@ -3220,6 +3299,7 @@ class OllamaWorker(QThread):
     """Worker thread for non-blocking Ollama requests."""
 
     chunk_received = Signal(str)
+    thinking_chunk_received = Signal(str)
     finished = Signal(object)  # new_context
     error_occurred = Signal(str)
 
@@ -3252,11 +3332,20 @@ class OllamaWorker(QThread):
 
                     traceback.print_exc()
 
+            def on_thinking_chunk(chunk: str):
+                try:
+                    if chunk:
+                        self.thinking_chunk_received.emit(chunk)
+                except Exception as e:
+                    print(f"Error emitting thinking chunk: {e}")
+
             response, new_context = self.client.generate_response_stream(
                 model=self.model,
                 prompt=self.prompt,
                 context=self.context,
                 callback=on_chunk,
+                thinking_callback=on_thinking_chunk,
+                think=True,
                 images=self.images,
                 num_ctx=self.llm_params.get("num_ctx"),
                 temperature=self.llm_params.get("temperature"),
@@ -3294,6 +3383,7 @@ class ChatToolsWorker(QThread):
     """Worker thread for Ollama chat with tools/function calling support."""
     
     chunk_received = Signal(str)
+    thinking_chunk_received = Signal(str)
     finished = Signal(str)  # final response
     error_occurred = Signal(str)
     tool_call_executed = Signal(str, str)  # tool_name, result
@@ -3322,6 +3412,10 @@ class ChatToolsWorker(QThread):
                 def on_chunk(chunk: str):
                     if chunk:
                         self.chunk_received.emit(chunk)
+
+                def on_thinking_chunk(chunk: str):
+                    if chunk:
+                        self.thinking_chunk_received.emit(chunk)
                 
                 # Call chat_with_tools with streaming
                 result = self.client.chat_with_tools(
@@ -3337,6 +3431,8 @@ class ChatToolsWorker(QThread):
                     seed=self.llm_params.get("seed"),
                     stream=True,
                     callback=on_chunk,
+                    thinking_callback=on_thinking_chunk,
+                    think=True,
                     request_id=self.request_id,
                 )
                 
