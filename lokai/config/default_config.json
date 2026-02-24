@@ -12,7 +12,7 @@
       "num_predict": -1
     },
     "conversation": {
-      "system_prompt": "You are a helpful AI assistant. When you have access to tools (like search_web), use them to get current information from the internet instead of relying only on your training data. Always search the web when asked about recent events, current information, latest news, or topics that may have changed recently.",
+      "system_prompt": "You are a helpful AI assistant.",
       "max_history_messages": 20,
       "use_explicit_history": false
     },
@@ -123,7 +123,7 @@
     }
   },
   "rag": {
-    "enabled": true,
+    "enabled": false,
     "auto_embed": false,
     "embedding_model": "nomic-embed-text:v1.5",
     "force_cpu": true,
@@ -137,7 +137,7 @@
     "show_prompt_preview": false
   },
   "asr": {
-    "enabled": true,
+    "enabled": false,
     "model": "nvidia/nemotron-speech-streaming-en-0.6b",
     "storage_path": null,
     "device": "cpu",

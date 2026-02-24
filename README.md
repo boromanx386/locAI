@@ -4,6 +4,16 @@ locAI is a desktop AI assistant that combines Large Language Models (LLM), Image
 
 **Repository:** [https://github.com/boromanx386/locAI](https://github.com/boromanx386/locAI) · **Version:** 1.0.0
 
+## Screenshots
+
+| Chat | GUI / model bar | Image generated |
+|------|-----------------|-----------------|
+| ![Chat](screenshots/locAI%20chat.png) | ![GUI](screenshots/locAI%20GUI.png) | ![Image](screenshots/locAI%20image.png) |
+
+| Vision | Audio |
+|--------|-------|
+| ![Vision](screenshots/locAI%20vision.png) | ![Sound](screenshots/lockAI%20sound.png) |
+
 ## Features
 
 - **LLM Chat**: Chat with AI models via Ollama (llama3.2, mistral, codellama, and more)
@@ -129,6 +139,44 @@ Access settings via **File > Preferences** or press `Ctrl+,`
 - **Models**: Hugging Face / model storage path (image, video, audio, ASR)
 - **TTS**: Engine (Kokoro or PocketTTS), voice, voice cloning, auto-speak
 - **ASR**: ASR settings (if NeMo is installed)
+- **RAG**: Semantic memory (embeddings), embedding model, CPU/GPU, memory options
+
+### RAG / Semantic memory (embeddings)
+
+RAG gives the model a “memory” of important bits from the conversation by storing **embeddings** of messages you choose and then injecting relevant ones into the prompt.
+
+**How it works:**
+1. **Embedding model** – Runs in Ollama (same server as chat). Default: **nomic-embed-text:v1.5**. Install with `ollama pull nomic-embed-text`. You can pick another model in **Settings → RAG** (list comes from your installed Ollama models, or you can type a custom name). Embeddings run on CPU by default so the GPU stays free for the chat model.
+2. **Manual “Remember”** – Nothing is embedded automatically. You choose what to remember: right‑click in the chat and use **“Remember selection”** or **“Remember message”**. That text is sent to Ollama’s embedding API, the vector is stored in a per‑chat file under `chat_embeddings/` (next to your config), and the message is kept with its embedding.
+3. **When you send a message** – The current message is embedded and compared (cosine similarity) to all stored “remembered” items. The top‑k most relevant are selected and formatted into a short **memory block** that is prepended to the prompt (e.g. “Relevant context from earlier…”). So the model sees: system prompt + optional memory block + recent conversation + your new message.
+4. **Settings** – In **Settings → RAG** you can set: embedding model, “top k” relevant memories, character limits, minimum similarity, and enable/disable RAG. Stored data is in the config directory under `chat_embeddings/` (one JSON file per chat).
+
+### Images and vision
+
+**Chat with images (vision models):**
+- You can **attach images** to a message (or paste) in the chat. Supported formats: JPG, PNG, BMP, GIF, TIFF.
+- Images are **resized** if larger than 1024 px (aspect ratio kept), converted to JPEG (quality 85), then to **base64** and sent to Ollama in the same request as your text (`images` array in the API).
+- You must use a **vision-capable model** (e.g. **llava**, **llama3.2-vision**, **bakllava**, **moondream**, **cogvlm**). The model dropdown in locAI shows both plain LLM and vision models; vision models are detected by name or by Ollama’s “vision” capability.
+- When the request includes images, the app sends them **without** previous conversation context (vision models often work better that way). After the reply, context is cleared for the next turn to avoid confusion.
+
+**Image generation (Stable Diffusion):**
+- Separate from vision: this **creates** images from text (or image→image) using **Stable Diffusion** (diffusers), not Ollama. Models and outputs use the **Hugging Face folder** you set in the wizard or in **Settings → Models**. It works with **all SD-compatible models and checkpoints**: base models like SDXL, SD 2.1, SD 1.5, plus community checkpoints from [Civitai](https://civitai.com) and similar (e.g. Il, Pony). Place downloaded models (e.g. `.safetensors` or diffusers-style) in your Hugging Face folder—subfolders are fine; the app will find them. **LoRA** files must go in the **`loras`** subfolder of that HF folder (e.g. `YourHFFolder/loras/`); the app only lists LoRAs from there (Settings → Image generation → LoRA tab). Generated images can then be attached in chat for a vision model to discuss, or used for **Generate Video** (SVD).
+- **Edit image (img2img):** Same principle as vision—you must **add the image to the chat** first (attach or paste). Then use the edit/image option on that message; the attached image is used as the source for img2img (strength and steps are in Settings → Image generation).
+
+### Tools (function calling)
+
+The model can call **tools** (web search, weather, YouTube, translate, etc.) when you have **tools enabled** and use a model that supports function calling.
+
+**Available tools:**  
+`search_web` (DuckDuckGo + WorldTimeAPI for time), `get_weather`, `search_code` (GitHub), `translate`, `search_youtube`, `fact_check`, `open_url`, `scrape_webpage`. Each can be turned on/off in **Settings → Ollama → Tools** (e.g. web_search, weather, scrape_webpage). The **status bar** has a tools toggle (construction icon): green = tools on, blue = off.
+
+**How it works:**
+1. When you send a message, if tools are enabled the app sends the **tool definitions** (name, description, parameters) to Ollama together with the prompt.
+2. If the model decides to use a tool, it returns a **tool call** (function name + arguments). The app runs the tool locally (e.g. HTTP request to DuckDuckGo, yt-dlp, etc.), then sends the **tool result** back to the model in the next message.
+3. The model can call several tools in sequence before giving you the final answer. Tool execution is done by locAI; only public HTTP/HTTPS URLs are allowed (localhost and private IPs are blocked for safety).
+
+**Requirements:**  
+Install dependencies from `requirements.txt` (e.g. `ddgs`, `yt-dlp`, `deep-translator`, `beautifulsoup4`). No API keys are required for the default tools.
 
 ### Text-to-Speech
 

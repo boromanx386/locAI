@@ -83,4 +83,7 @@ huggingface_cache/
 .env
 .env.local
 
-
+# README screenshots (allow)
+!screenshots/
+!screenshots/*.png
+!screenshots/*.jpg
