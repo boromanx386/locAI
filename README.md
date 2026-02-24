@@ -2,10 +2,12 @@
 
 locAI is a desktop AI assistant that combines Large Language Models (LLM), Image Generation, Video Generation, Audio Generation, Automatic Speech Recognition (ASR), and Text-to-Speech (TTS) in one accessible package.
 
+**Repository:** [https://github.com/boromanx386/locAI](https://github.com/boromanx386/locAI) · **Version:** 1.0.0
+
 ## Features
 
 - **LLM Chat**: Chat with AI models via Ollama (llama3.2, mistral, codellama, and more)
-- **Image Generation**: Generate images using Stable Diffusion (optional, requires additional dependencies)
+- **Image Generation**: Generate images using Stable Diffusion (optional)
 - **Video Generation**: Create videos from images using Stable Video Diffusion (SVD) - optional
 - **Audio Generation**: Generate audio using Stable Audio Open - optional
 - **Automatic Speech Recognition (ASR)**: Voice input using NVIDIA Nemotron Speech Streaming - optional
@@ -18,7 +20,7 @@ locAI is a desktop AI assistant that combines Large Language Models (LLM), Image
 ## Requirements
 
 ### Essential
-- **Python 3.10+** (3.8+ may work; 3.10+ recommended)
+- **Python 3.12** (developed and tested on 3.12; 3.10 and 3.11 should work but are not regularly tested)
 - **Ollama** – install from [ollama.com](https://ollama.com/download) and ensure it’s in your PATH
 - Dependencies from `lokai/requirements.txt` (see below)
 
@@ -37,9 +39,9 @@ pip install Cython>=0.29.0 sounddevice webrtcvad
 pip install "nemo_toolkit[asr] @ git+https://github.com/NVIDIA/NeMo.git@main"
 ```
 
-### Optional – GPU
-- **CUDA** for GPU acceleration (recommended for image/video/audio)
-- **NVIDIA GPU with 8GB+ VRAM** recommended; the app is tuned to work with 8GB
+### Optional – GPU (image / video / audio)
+- **NVIDIA GPU with CUDA** for acceleration (recommended for image, video, and audio generation).
+- Tested with **PyTorch 2.9.1+cu128** on **RTX 5060 Ti 16GB**; also runs on older 8GB cards (e.g. RTX 2080). Install the PyTorch build that matches your CUDA version from [pytorch.org](https://pytorch.org/get-started/locally/) if the default from `requirements.txt` does not.
 
 ## Installation
 
@@ -83,7 +85,7 @@ pip install -r requirements.txt
 
 **Notes:**
 - TTS: use **Kokoro** (multi-language) and/or **PocketTTS** (voice cloning); both are in requirements.
-- Image/Video/Audio: need PyTorch + diffusers (in requirements); first run will download models.
+- Image/Video/Audio: need PyTorch + diffusers (in requirements). For GPU, install a CUDA build from [pytorch.org](https://pytorch.org/get-started/locally/) (tested 2.9.1+cu128 on RTX 5060 Ti 16GB; also runs on RTX 2080 8GB). First run will download models.
 - ASR (voice input): optional; uncomment the ASR section in `requirements.txt` and install as in the Optional – ASR section above.
 
 ### 4. Run locAI
@@ -103,8 +105,10 @@ python main.py
 
 On first run, the setup wizard will guide you through:
 - Ollama detection and verification
-- Model storage location (optional)
+- **Hugging Face folder** (where models are downloaded – TTS, image/video/audio)
 - Theme selection
+
+After you finish the wizard, the app will close. Start it again so the chosen folder is used.
 
 ## Usage
 
@@ -120,11 +124,11 @@ On first run, the setup wizard will guide you through:
 Access settings via **File > Preferences** or press `Ctrl+,`
 
 **Settings tabs:**
-- **General**: Theme, font size, compact mode
-- **Ollama**: Base URL, default model, auto-start
-- **Models**: Storage path for image/video/audio generation models
-- **TTS**: TTS engine selection (Kokoro or PocketTTS), voice selection, voice cloning, auto-speak options
-- **ASR**: ASR settings (if available)
+- **General**: Theme, prompt templates, global shortcuts
+- **Ollama**: Base URL, default model, auto-start, LLM parameters
+- **Models**: Hugging Face / model storage path (image, video, audio, ASR)
+- **TTS**: Engine (Kokoro or PocketTTS), voice, voice cloning, auto-speak
+- **ASR**: ASR settings (if NeMo is installed)
 
 ### Text-to-Speech
 
@@ -143,7 +147,7 @@ locAI supports two TTS engines:
 
 **TTS Usage:**
 - Responses are automatically spoken (if auto-speak is enabled)
-- Use the TTS controls (play/pause/stop) in the status panel
+- Use the TTS controls (play/stop) in the status panel
 - Right-click selected text in chat for "Read with TTS" option
 - Use global shortcut F9 to read any selected text in Windows
 
@@ -177,20 +181,20 @@ Generate audio using Stable Audio Open:
 - **Config file**:  
   - Windows: `%LOCALAPPDATA%\locAI\config.json`  
   - Linux/Mac: `~/.config/lokai/config.json`
-- **Generated files** (if not overridden in Settings): images, video, and audio go into subfolders of the config directory (e.g. `generated_images`, `generated_videos`, `generated_audio`).
-- **Chat embeddings** (RAG): stored under the config directory in `chat_embeddings`.
+- **Generated files** (unless you set custom paths in Settings): images, video, and audio go into subfolders of the config directory (`generated_images`, `generated_videos`, `generated_audio`).
+- **Chat embeddings** (RAG): in the config directory under `chat_embeddings`.
 
 ### Model storage location
 
-You can set where models are stored in **Settings > Ollama / Models** (e.g. image, video, audio, ASR). Default if not set:
+You choose the Hugging Face folder in the **setup wizard** (first run) or later in **Settings → Models**. Default suggestion if you don’t set it:
 - Windows: `Documents\locAI\models`
 - Linux/Mac: `~/Documents/locAI/models`
 
-The app uses this path for Hugging Face caches (diffusers, transformers, etc.) and organizes models by type (Stable Diffusion, SVD, Stable Audio, NeMo ASR, TTS).
+That folder is used for all Hugging Face downloads (Stable Diffusion, SVD, Stable Audio, TTS voices, NeMo ASR).
 
 ### Environment variables
 
-- **`LOCAI_HF_CACHE`** (optional): Override the Hugging Face cache root **before** starting the app (e.g. to use another drive). If unset, the app may use a default (e.g. `Q:\huggingface_cache` if that drive exists) or the path you set in Settings.
+- **`LOCAI_HF_CACHE`** (optional): Override the Hugging Face cache root **before** starting the app (e.g. to use another drive). If unset, the app uses the path you chose in the setup wizard or in Settings → Models.
 - The app also sets: `HF_HOME`, `HF_HUB_CACHE`, `TRANSFORMERS_CACHE`, `HF_DATASETS_CACHE`, `DIFFUSERS_CACHE` when using image/video/audio features.
 
 ## GPU Memory Optimization
@@ -203,7 +207,7 @@ locAI is specifically optimized to run efficiently on GPUs with limited VRAM, in
 - **Sequential CPU Offload**: Image generation models use sequential CPU offload to minimize VRAM usage
 - **Memory Cleanup on Exit**: All GPU memory is properly released when the application closes
 
-This allows you to run powerful local AI models (including vision models and image generation) even on mid-range GPUs like the RTX 2080 with 8GB VRAM.
+Tested with **PyTorch 2.9.1+cu128** on **RTX 5060 Ti 16GB**; also runs on **RTX 2080 8GB** and similar.
 
 ## Troubleshooting
 
@@ -227,18 +231,11 @@ This allows you to run powerful local AI models (including vision models and ima
 
 ### Image Generation Not Working
 
-1. Ensure full requirements are installed: `pip install -r requirements.txt`
-2. Check that model storage path has sufficient space (models are several GB)
-3. Verify CUDA is available for GPU acceleration (optional but recommended)
-4. If you encounter "CUDA out of memory" errors, the application will automatically unload models to free memory
+1. Ensure full requirements are installed: `pip install -r lokai/requirements.txt` (from project root) or `pip install -r requirements.txt` (from inside `lokai/`)
+2. Check that your Hugging Face folder (Settings → Models) has enough free space (models are several GB)
+3. For GPU: install a CUDA build of PyTorch from [pytorch.org](https://pytorch.org/get-started/locally/)
+4. If you see "CUDA out of memory", the app will try to unload models automatically; close other GPU apps or use a smaller model
 
-### GPU Memory Issues
-
-If GPU memory remains high after closing the application:
-
-1. Run the GPU memory cleaner utility: `python lokai/utils/clear_gpu_memory.py`
-2. Restart your GPU driver (Device Manager > Display adapters > Disable/Enable)
-3. Restart your computer if memory persists
 
 The application is optimized for 8GB+ GPUs, but if you have less VRAM, you may need to:
 - Use smaller models
@@ -249,10 +246,9 @@ The application is optimized for 8GB+ GPUs, but if you have less VRAM, you may n
 
 **For Kokoro-82M:**
 1. Ensure `kokoro` and `soundfile` are installed: `pip install kokoro soundfile`
-2. Voice files are automatically downloaded to Hugging Face cache on first use
-3. Default cache location: `~/.cache/huggingface/hub/models--hexgrad--Kokoro-82M/`
-4. If voices are missing, manually download them from [Hugging Face](https://huggingface.co/hexgrad/Kokoro-82M/tree/main/voices) and place them in the cache directory
-5. Check Settings > TTS to verify language and voice selection
+2. Voice files are downloaded to your **Hugging Face folder** (the one from the setup wizard or Settings → Models) on first use
+3. If voices are missing, manually download them from [Hugging Face](https://huggingface.co/hexgrad/Kokoro-82M/tree/main/voices) and place them in that folder (under the usual hub structure)
+4. Check Settings → TTS for language and voice selection
 
 **For PocketTTS:**
 1. Ensure `pocket-tts` and `scipy` are installed: `pip install pocket-tts scipy`
@@ -262,13 +258,10 @@ The application is optimized for 8GB+ GPUs, but if you have less VRAM, you may n
 
 ### ASR Not Working
 
-1. Ensure `nemo_toolkit[asr]` is installed from source (see requirements.txt)
-2. NeMo installation requires Cython: `pip install Cython>=0.29.0`
-3. Install from GitHub: `pip install git+https://github.com/NVIDIA/NeMo.git@main`
-4. Ensure `sounddevice` and `webrtcvad` are installed: `pip install sounddevice webrtcvad`
-5. ASR models are automatically downloaded on first use
-6. Check microphone permissions in Windows settings
-7. Verify audio input device is working in Settings > ASR
+1. Uncomment the ASR block in `lokai/requirements.txt`, then: `pip install Cython>=0.29.0 sounddevice webrtcvad` and `pip install "nemo_toolkit[asr] @ git+https://github.com/NVIDIA/NeMo.git@main"`
+2. ASR models are downloaded to your Hugging Face folder on first use
+3. Check microphone permissions (e.g. Windows Settings)
+4. In Settings → ASR, verify the correct input device is selected
 
 ## Project Structure
 
@@ -307,16 +300,7 @@ lokai/
 
 ### Running from source
 
-```bash
-# From project root (parent of lokai/)
-pip install -r lokai/requirements.txt
-python -m lokai
-
-# Or from inside lokai/
-cd lokai
-pip install -r requirements.txt
-python main.py
-```
+Same as **Installation** above: from project root run `pip install -r lokai/requirements.txt` then `python -m lokai`, or from inside `lokai/` use `pip install -r requirements.txt` and `python main.py`.
 
 ### Building
 
@@ -331,7 +315,7 @@ See the `LICENSE` file for the full text.
 
 ## Support
 
-For issues, questions, or contributions, please [add your contact/support information].
+For bugs, questions, or contributions please use [GitHub Issues](https://github.com/boromanx386/locAI/issues). When opening an issue, include your OS, Python version, and whether you use GPU (and which one) so we can help faster.
 
 ## Credits
 

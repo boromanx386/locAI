@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [Unreleased]
+## [1.0.0] - 2026-02-24
 
 ### Added
 - **Tools toggle** on main window status bar (construction icon): enable/disable Ollama tools; green when on, blue when off.
@@ -29,4 +29,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-*Add new entries under [Unreleased] or under a new version heading when you release.*
+## [Unreleased]
+
+*Add new entries here for the next release.*
+
+---

@@ -17,19 +17,20 @@ SUBDIR_GENERATED_VIDEOS = "generated_videos"
 SUBDIR_GENERATED_AUDIO = "generated_audio"
 SUBDIR_VOICE_CACHE = "voice_cache"
 
-# Suggested HF cache root when Q: drive exists (used by main.py and Settings UI)
-DEFAULT_HF_CACHE_SUGGESTION = "Q:\\huggingface_cache"
-
-
 def default_hf_cache_root() -> Optional[str]:
     """
-    Suggested Hugging Face cache root before config is loaded (e.g. at startup).
-    Returns DEFAULT_HF_CACHE_SUGGESTION if Q:\\ exists, else None.
-    Environment variable LOCAI_HF_CACHE overrides this when set in main.py.
+    No hardcoded path. Returns None so that HF cache comes only from
+    config (models.storage_path) or env (LOCAI_HF_CACHE).
     """
-    if os.path.exists("Q:\\"):
-        return DEFAULT_HF_CACHE_SUGGESTION
     return None
+
+
+def default_hf_cache_suggestion() -> str:
+    """
+    Default suggestion for HF cache / model storage (e.g. in Settings UI or wizard).
+    Uses user's Documents folder, same as ModelManager default.
+    """
+    return str(Path.home() / "Documents" / "locAI" / "models")
 
 
 def get_embeddings_dir(config_manager: "ConfigManager") -> Path:

@@ -17,8 +17,9 @@ pygame==2.5.2
 pocket-tts==1.0.1
 scipy==1.16.1
 
-# Image / Video / Audio (diffusers)
-torch==2.9.1+cu128
+# Image / Video / Audio (diffusers) – requires CUDA GPU for acceleration.
+# Tested with PyTorch 2.9.1+cu128 on RTX 5060 Ti 16GB; also runs on RTX 2080 8GB. Install a CUDA build from pytorch.org if needed.
+torch>=2.9.1
 torchsde==0.2.6
 diffusers==0.34.0
 transformers==4.56.0

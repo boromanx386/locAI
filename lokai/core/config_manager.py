@@ -77,7 +77,7 @@ class ConfigManager:
                 "auto_start": False,
             },
             "models": {"storage_path": None, "auto_download": False},
-            "ui": {"theme": "dark", "font_size": 14, "compact_mode": False},
+            "ui": {"theme": "dark"},
             "tts": {"enabled": True, "voice": "en-US-AriaNeural", "auto_speak": False},
             "image_gen": {"enabled": False, "storage_path": None, "output_path": None},
             "prompts": [],

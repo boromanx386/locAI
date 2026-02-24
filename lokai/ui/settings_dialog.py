@@ -31,7 +31,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QDesktopServices
 from lokai.core.config_manager import ConfigManager
 from lokai.core.paths import (
-    default_hf_cache_root,
+    default_hf_cache_suggestion,
     get_image_output_dir,
     get_video_output_dir,
     get_audio_output_dir,
@@ -1583,9 +1583,8 @@ class SettingsDialog(QDialog):
         current_path = self.video_model_path_edit.text()
         if not current_path:
             current_path = (
-                default_hf_cache_root()
-                or self.model_path_edit.text()
-                or str(Path.home() / "Documents" / "locAI" / "models")
+                self.model_path_edit.text()
+                or default_hf_cache_suggestion()
             )
 
         path = QFileDialog.getExistingDirectory(
@@ -1635,9 +1634,8 @@ class SettingsDialog(QDialog):
         current_path = self.audio_model_path_edit.text()
         if not current_path:
             current_path = (
-                default_hf_cache_root()
-                or self.model_path_edit.text()
-                or str(Path.home() / "Documents" / "locAI" / "models")
+                self.model_path_edit.text()
+                or default_hf_cache_suggestion()
             )
 
         path = QFileDialog.getExistingDirectory(
@@ -1674,7 +1672,7 @@ class SettingsDialog(QDialog):
         video_storage_path = self.video_model_path_edit.text()
         if not video_storage_path:
             p = get_video_storage_path(self.config_manager)
-            video_storage_path = str(p) if p else (default_hf_cache_root() or self.model_path_edit.text() or "")
+            video_storage_path = str(p) if p else (self.model_path_edit.text() or default_hf_cache_suggestion() or "")
 
         if video_storage_path:
             try:
@@ -2537,7 +2535,7 @@ class SettingsDialog(QDialog):
         # Video Generation
         # Load video model storage path
         video_storage_p = get_video_storage_path(self.config_manager)
-        video_model_path = str(video_storage_p) if video_storage_p else default_hf_cache_root()
+        video_model_path = str(video_storage_p) if video_storage_p else default_hf_cache_suggestion()
         if video_model_path:
             self.video_model_path_edit.setText(video_model_path)
 
@@ -2598,7 +2596,7 @@ class SettingsDialog(QDialog):
         # Audio Generation
         # Load audio model storage path
         audio_storage_p = get_audio_storage_path(self.config_manager)
-        audio_model_path = str(audio_storage_p) if audio_storage_p else default_hf_cache_root()
+        audio_model_path = str(audio_storage_p) if audio_storage_p else default_hf_cache_suggestion()
         if audio_model_path:
             self.audio_model_path_edit.setText(audio_model_path)
 

@@ -183,19 +183,19 @@ class OllamaGuidePage(QWizardPage):
 
 
 class ModelLocationPage(QWizardPage):
-    """Page for selecting model storage location."""
+    """Page for selecting Hugging Face cache / model storage location."""
     
     def __init__(self):
         super().__init__()
-        self.setTitle("Model Storage Location")
-        self.setSubTitle("Choose where to store image generation models")
+        self.setTitle("Hugging Face Folder")
+        self.setSubTitle("Choose where to store downloaded models (Hugging Face cache)")
         
         layout = QVBoxLayout()
         
         info_label = QLabel(
-            "locAI can generate images using Stable Diffusion models.\n"
-            "These models are large (several GB) and need storage space.\n\n"
-            "Choose a location with sufficient free space:"
+            "locAI downloads models from Hugging Face (Stable Diffusion, TTS voices, etc.).\n"
+            "These files can be large (several GB). Choose a folder with enough free space.\n\n"
+            "This folder will be used as the Hugging Face cache for all model downloads:"
         )
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
@@ -220,14 +220,14 @@ class ModelLocationPage(QWizardPage):
         self.setLayout(layout)
     
     def browse_path(self):
-        """Browse for storage path."""
+        """Browse for Hugging Face cache folder."""
         current_path = self.path_label.text()
         if not current_path:
             current_path = str(Path.home() / "Documents" / "locAI" / "models")
         
         path = QFileDialog.getExistingDirectory(
             self,
-            "Select Model Storage Location",
+            "Select Hugging Face Folder",
             current_path
         )
         
@@ -283,6 +283,13 @@ class CompletionPage(QWizardPage):
         completion_text.setWordWrap(True)
         completion_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(completion_text)
+        
+        restart_note = QLabel(
+            "The application will close now. Please start locAI again for your settings (including the Hugging Face folder) to take effect."
+        )
+        restart_note.setWordWrap(True)
+        restart_note.setStyleSheet("color: #94A3B8; font-style: italic; margin-top: 12px;")
+        layout.addWidget(restart_note, alignment=Qt.AlignmentFlag.AlignCenter)
         
         layout.addStretch()
         self.setLayout(layout)

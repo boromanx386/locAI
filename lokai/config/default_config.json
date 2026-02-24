@@ -28,9 +28,7 @@
     "auto_download": false
   },
   "ui": {
-    "theme": "dark",
-    "font_size": 14,
-    "compact_mode": false
+    "theme": "dark"
   },
   "tts": {
     "enabled": true,
