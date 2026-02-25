@@ -36,7 +36,7 @@ locAI is a desktop AI assistant that combines Large Language Models (LLM), Image
 
 ### What’s in requirements.txt
 - **Core**: PySide6, requests, Pillow (GUI, Ollama API, images)
-- **Tools**: ddgs, yt-dlp, youtube-transcript-api, deep-translator, beautifulsoup4 (web search, YouTube, translate, scrape)
+- **Tools**: ddgs, yt-dlp, youtube-transcript-api, deep-translator, beautifulsoup4 (web search, YouTube, translate, scrape – beautifulsoup4 is optional; without it, `scrape_webpage` is unavailable)
 - **TTS**: kokoro, soundfile, pygame, pocket-tts, scipy (Kokoro and/or PocketTTS)
 - **Image/Video/Audio**: torch, diffusers, transformers, peft, numpy (Stable Diffusion, SVD, Stable Audio)
 - **Other**: keyboard (global shortcuts)
@@ -48,6 +48,9 @@ ASR (NVIDIA NeMo) is **not** installed by default. To enable voice input, uncomm
 pip install Cython>=0.29.0 sounddevice webrtcvad
 pip install "nemo_toolkit[asr] @ git+https://github.com/NVIDIA/NeMo.git@main"
 ```
+
+### Optional – BeautifulSoup (scrape_webpage)
+The `scrape_webpage` tool uses BeautifulSoup4 to parse HTML. If `beautifulsoup4` is not installed, the app works normally but `scrape_webpage` will not be available. To use it: `pip install beautifulsoup4`. It is disabled by default; enable it in **Settings → Ollama → Tools** or manually in config: `ollama.tools.scrape_webpage: true`.
 
 ### Optional – GPU (image / video / audio)
 - **NVIDIA GPU with CUDA** for acceleration (recommended for image, video, and audio generation).
@@ -176,7 +179,7 @@ The model can call **tools** (web search, weather, YouTube, translate, etc.) whe
 3. The model can call several tools in sequence before giving you the final answer. Tool execution is done by locAI; only public HTTP/HTTPS URLs are allowed (localhost and private IPs are blocked for safety).
 
 **Requirements:**  
-Install dependencies from `requirements.txt` (e.g. `ddgs`, `yt-dlp`, `deep-translator`, `beautifulsoup4`). No API keys are required for the default tools.
+Install dependencies from `requirements.txt` (e.g. `ddgs`, `yt-dlp`, `deep-translator`, `beautifulsoup4`). No API keys are required for the default tools. **BeautifulSoup4** is optional—the app runs without it; only `scrape_webpage` is unavailable. If installed, you can enable it in Settings or by setting `ollama.tools.scrape_webpage` to `true` in your config file.
 
 ### Text-to-Speech
 

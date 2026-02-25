@@ -163,5 +163,12 @@
       "max_chars_per_file": 50000,
       "max_total_chars": 150000
     }
+  },
+  "shortcuts": {
+    "global": {
+      "enabled": false,
+      "tts": "f9",
+      "image": "f10"
+    }
   }
 }
