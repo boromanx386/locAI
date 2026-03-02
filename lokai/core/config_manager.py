@@ -60,6 +60,10 @@ class ConfigManager:
         # Load default config
         return self._load_default_config()
 
+    def reload_config(self) -> None:
+        """Reload configuration from disk, merging with defaults."""
+        self.config = self._load_config()
+
     def _load_default_config(self) -> Dict[str, Any]:
         """Load default configuration."""
         if self.default_config_file.exists():

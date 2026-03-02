@@ -24,6 +24,14 @@ class OllamaClient:
         self.timeout = 7200  # 2 hours for long generations
         self._active_requests = {}  # Track active streaming requests for cancellation
         self._request_lock = threading.Lock()  # Lock for thread-safe request tracking
+        self._last_response_metrics = None  # Metrics from most recent completed response
+
+    def get_last_response_metrics(self) -> Optional[dict]:
+        """Get metrics from the latest completed Ollama response."""
+        with self._request_lock:
+            if self._last_response_metrics is None:
+                return None
+            return dict(self._last_response_metrics)
 
     def is_running(self) -> bool:
         """
@@ -166,6 +174,7 @@ class OllamaClient:
             if response.status_code == 200:
                 full_response = ""
                 new_context = None
+                final_metrics = None
 
                 for line in response.iter_lines():
                     # Check for cancellation
@@ -197,6 +206,13 @@ class OllamaClient:
 
                             # Check if generation is done
                             if data.get("done", False):
+                                final_metrics = {
+                                    "prompt_eval_count": data.get("prompt_eval_count"),
+                                    "eval_count": data.get("eval_count"),
+                                    "total_duration": data.get("total_duration"),
+                                    "eval_duration": data.get("eval_duration"),
+                                    "model": model,
+                                }
                                 break
 
                             # Handle errors in stream
@@ -215,6 +231,8 @@ class OllamaClient:
                         new_context,
                     )
 
+                with self._request_lock:
+                    self._last_response_metrics = final_metrics
                 return full_response, new_context
             else:
                 # Try to parse error response
@@ -426,6 +444,7 @@ class OllamaClient:
                     # Streaming mode
                     full_message = {"role": "assistant", "content": ""}
                     tool_calls = []
+                    final_metrics = None
                     
                     for line in response.iter_lines():
                         # Check for cancellation
@@ -470,6 +489,13 @@ class OllamaClient:
                                                 tool_calls.append(tool_call)
                                 
                                 if data.get("done", False):
+                                    final_metrics = {
+                                        "prompt_eval_count": data.get("prompt_eval_count"),
+                                        "eval_count": data.get("eval_count"),
+                                        "total_duration": data.get("total_duration"),
+                                        "eval_duration": data.get("eval_duration"),
+                                        "model": model,
+                                    }
                                     break
                                     
                             except json.JSONDecodeError:
@@ -478,10 +504,20 @@ class OllamaClient:
                     result = {"message": full_message}
                     if tool_calls:
                         result["message"]["tool_calls"] = tool_calls
+                    with self._request_lock:
+                        self._last_response_metrics = final_metrics
                     return result
                 else:
                     # Non-streaming
                     data = response.json()
+                    with self._request_lock:
+                        self._last_response_metrics = {
+                            "prompt_eval_count": data.get("prompt_eval_count"),
+                            "eval_count": data.get("eval_count"),
+                            "total_duration": data.get("total_duration"),
+                            "eval_duration": data.get("eval_duration"),
+                            "model": model,
+                        }
                     return data
             else:
                 error_data = response.json() if response.headers.get('content-type', '').startswith('application/json') else {}

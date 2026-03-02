@@ -461,12 +461,6 @@ class MainWindow(QMainWindow):
         storage_path = get_image_storage_path(self.config_manager)
         if storage_path:
             try:
-                # Setup environment before importing diffusers
-                from lokai.utils.model_manager import ModelManager
-
-                manager = ModelManager(str(storage_path))
-                manager.setup_environment_variables()
-
                 self.image_generator = ImageGenerator(str(storage_path))
                 if not self.image_generator.is_available():
                     self.image_generator = None
@@ -2322,6 +2316,7 @@ class MainWindow(QMainWindow):
                 self.chat_widget.finish_ai_message()
             # Re-enable send button
             self.chat_widget.set_send_enabled(True)
+            self._update_context_usage_status()
             self._response_started_for_request = False
             self._stream_active = False
         except Exception as e:
@@ -2393,6 +2388,7 @@ class MainWindow(QMainWindow):
             
             # Re-enable send button
             self.chat_widget.set_send_enabled(True)
+            self._update_context_usage_status()
             self._response_started_for_request = False
             self._stream_active = False
             
@@ -2449,6 +2445,38 @@ class MainWindow(QMainWindow):
             self.chat_widget.set_send_enabled(True)
             self._response_started_for_request = False
             self._stream_active = False
+
+    def _update_context_usage_status(self):
+        """Show context usage in status bar after each completed response."""
+        try:
+            metrics = self.ollama_client.get_last_response_metrics()
+            if not metrics:
+                return
+
+            used = metrics.get("prompt_eval_count")
+            if used is None:
+                return
+
+            max_ctx = None
+            if self._llm_params_cache:
+                max_ctx = self._llm_params_cache.get("num_ctx")
+            if not max_ctx:
+                max_ctx = self.config_manager.get("ollama.llm_params.num_ctx", 4096)
+
+            if isinstance(max_ctx, int) and max_ctx > 0:
+                pct = (used / max_ctx) * 100
+                level = ""
+                if pct >= 95:
+                    level = " [CRITICAL]"
+                elif pct >= 80:
+                    level = " [WARNING]"
+                self.status_bar.showMessage(
+                    f"Context: {used}/{max_ctx} ({pct:.1f}%){level}", 8000
+                )
+            else:
+                self.status_bar.showMessage(f"Context used: {used}", 8000)
+        except Exception as e:
+            print(f"Error updating context usage status: {e}")
 
     def on_seed_lock_toggled(self, locked: bool):
         """Handle seed lock toggle from chat widget."""

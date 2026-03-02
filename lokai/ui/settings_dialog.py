@@ -33,9 +33,9 @@ from lokai.core.config_manager import ConfigManager
 from lokai.core.paths import (
     default_hf_cache_suggestion,
     get_image_output_dir,
+    get_image_storage_path,
     get_video_output_dir,
     get_audio_output_dir,
-    get_models_storage_path,
     get_video_storage_path,
     get_audio_storage_path,
 )
@@ -233,9 +233,28 @@ class SettingsDialog(QDialog):
         self.ollama_url_edit.setPlaceholderText("http://localhost:11434")
         ollama_layout.addRow("Base URL:", self.ollama_url_edit)
 
-        self.default_model_edit = QLineEdit()
+        default_model_layout = QHBoxLayout()
+        self.default_model_edit = QComboBox()
+        self.default_model_edit.setEditable(False)
+        self.default_model_edit.setMinimumWidth(300)
+        self.default_model_edit.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.default_model_edit.setPlaceholderText("llama3.2")
-        ollama_layout.addRow("Default Model:", self.default_model_edit)
+        default_model_layout.addWidget(self.default_model_edit, stretch=1)
+
+        self.refresh_ollama_models_btn = QPushButton("Refresh")
+        MaterialIcons.apply_to_button(
+            self.refresh_ollama_models_btn, MaterialIcons.REFRESH_SVG, size=18
+        )
+        self.refresh_ollama_models_btn.setToolTip("Refresh installed Ollama models")
+        self.refresh_ollama_models_btn.clicked.connect(self._refresh_ollama_models)
+        default_model_layout.addWidget(self.refresh_ollama_models_btn)
+        ollama_layout.addRow("Default Model:", default_model_layout)
+
+        # Changing model here immediately switches which model-specific
+        # LLM/conversation settings are shown below.
+        self.default_model_edit.currentTextChanged.connect(
+            self._on_default_model_changed
+        )
 
         self.auto_start_check = QCheckBox("Auto-start Ollama")
         ollama_layout.addRow("", self.auto_start_check)
@@ -253,6 +272,12 @@ class SettingsDialog(QDialog):
             "Radi samo sa modelima koji podržavaju tools (qwen3, deepseek-r1, itd.)."
         )
         tools_layout.addRow("", self.tools_enabled_check)
+
+        self.scrape_webpage_check = QCheckBox("Enable scrape_webpage tool")
+        self.scrape_webpage_check.setToolTip(
+            "Dozvoli scrape_webpage tool za čitanje i parsiranje sadržaja web stranica."
+        )
+        tools_layout.addRow("", self.scrape_webpage_check)
 
         tools_group.setLayout(tools_layout)
         layout.addWidget(tools_group)
@@ -1338,6 +1363,118 @@ class SettingsDialog(QDialog):
             self.embedding_model_combo.clear()
             self.embedding_model_combo.addItems(fallback_models)
 
+    def _refresh_ollama_models(self):
+        """Refresh installed Ollama LLM/Vision models for Default Model combo."""
+        base_url = self.ollama_url_edit.text().strip() or "http://localhost:11434"
+        detector = OllamaDetector(base_url)
+        models, error = detector.get_llm_and_vision_models()
+
+        current_text = self.default_model_edit.currentText().strip()
+        self.default_model_edit.blockSignals(True)
+        self.default_model_edit.clear()
+        if models:
+            self.default_model_edit.addItems(models)
+        if current_text and self.default_model_edit.findText(current_text) < 0:
+            self.default_model_edit.addItem(current_text)
+        self.default_model_edit.blockSignals(False)
+
+        if current_text:
+            self.default_model_edit.setCurrentText(current_text)
+        elif models:
+            self.default_model_edit.setCurrentIndex(0)
+
+        if error:
+            print(f"Warning: could not refresh Ollama models: {error}")
+
+    def _load_model_specific_ollama_settings(self, model_name: str):
+        """Load LLM + conversation settings for selected model, with global fallback."""
+        model_settings = self.config_manager.get_llm_model_setting(model_name) if model_name else None
+
+        # LLM Parameters - use model-specific or fall back to global defaults
+        if model_settings and "llm_params" in model_settings:
+            llm_params = model_settings["llm_params"]
+            num_ctx = llm_params.get(
+                "num_ctx", self.config_manager.get("ollama.llm_params.num_ctx", 4096)
+            )
+            temperature = llm_params.get(
+                "temperature",
+                self.config_manager.get("ollama.llm_params.temperature", 0.7),
+            )
+            top_p = llm_params.get(
+                "top_p", self.config_manager.get("ollama.llm_params.top_p", 0.9)
+            )
+            top_k = llm_params.get(
+                "top_k", self.config_manager.get("ollama.llm_params.top_k", 40)
+            )
+            repeat_penalty = llm_params.get(
+                "repeat_penalty",
+                self.config_manager.get("ollama.llm_params.repeat_penalty", 1.1),
+            )
+            num_predict = llm_params.get(
+                "num_predict",
+                self.config_manager.get("ollama.llm_params.num_predict", -1),
+            )
+        else:
+            # Use global defaults
+            num_ctx = self.config_manager.get("ollama.llm_params.num_ctx", 4096)
+            temperature = self.config_manager.get("ollama.llm_params.temperature", 0.7)
+            top_p = self.config_manager.get("ollama.llm_params.top_p", 0.9)
+            top_k = self.config_manager.get("ollama.llm_params.top_k", 40)
+            repeat_penalty = self.config_manager.get(
+                "ollama.llm_params.repeat_penalty", 1.1
+            )
+            num_predict = self.config_manager.get("ollama.llm_params.num_predict", -1)
+
+        self.context_window_spin.setValue(num_ctx)
+        self.temperature_spin.setValue(temperature)
+        self.top_p_spin.setValue(top_p)
+        self.top_k_spin.setValue(top_k)
+        self.repeat_penalty_spin.setValue(repeat_penalty)
+        self.max_tokens_spin.setValue(num_predict)
+
+        # Conversation Settings - use model-specific or fall back to global defaults
+        if model_settings and "conversation" in model_settings:
+            conv_settings = model_settings["conversation"]
+            system_prompt = conv_settings.get(
+                "system_prompt",
+                self.config_manager.get(
+                    "ollama.conversation.system_prompt",
+                    "You are a helpful AI assistant.",
+                ),
+            )
+            max_history = conv_settings.get(
+                "max_history_messages",
+                self.config_manager.get("ollama.conversation.max_history_messages", 20),
+            )
+            use_explicit = conv_settings.get(
+                "use_explicit_history",
+                self.config_manager.get(
+                    "ollama.conversation.use_explicit_history", False
+                ),
+            )
+        else:
+            # Use global defaults
+            system_prompt = self.config_manager.get(
+                "ollama.conversation.system_prompt", "You are a helpful AI assistant."
+            )
+            max_history = self.config_manager.get(
+                "ollama.conversation.max_history_messages", 20
+            )
+            use_explicit = self.config_manager.get(
+                "ollama.conversation.use_explicit_history", False
+            )
+
+        self.system_prompt_edit.setPlainText(system_prompt)
+        self.max_history_spin.setValue(max_history)
+        self.explicit_history_check.setChecked(use_explicit)
+
+    def _on_default_model_changed(self, model_name: str):
+        """When model changes in Settings, load that model's parameter profile."""
+        model_name = (model_name or "").strip()
+        if not model_name:
+            return
+        self._load_model_specific_ollama_settings(model_name)
+
     def add_prompt(self):
         """Add a new prompt."""
         from PySide6.QtWidgets import QInputDialog
@@ -1572,9 +1709,6 @@ class SettingsDialog(QDialog):
                 self.model_path_edit.setText(path)
                 # Refresh image models after path change
                 self.refresh_image_models()
-                # Refresh video models after path change
-                if hasattr(self, "refresh_video_models"):
-                    self.refresh_video_models()
             else:
                 QMessageBox.warning(self, "Invalid Path", error)
 
@@ -1727,7 +1861,8 @@ class SettingsDialog(QDialog):
         # Get storage path
         storage_path = self.model_path_edit.text()
         if not storage_path:
-            storage_path = self.config_manager.get("models.storage_path")
+            p = get_image_storage_path(self.config_manager)
+            storage_path = str(p) if p else None
 
         if storage_path:
             try:
@@ -1781,7 +1916,7 @@ class SettingsDialog(QDialog):
 
         storage_path = self.model_path_edit.text()
         if not storage_path:
-            p = get_models_storage_path(self.config_manager)
+            p = get_image_storage_path(self.config_manager)
             storage_path = str(p) if p else None
 
         if storage_path:
@@ -1821,7 +1956,8 @@ class SettingsDialog(QDialog):
         # Get storage path
         storage_path = self.model_path_edit.text()
         if not storage_path:
-            storage_path = self.config_manager.get("models.storage_path")
+            p = get_image_storage_path(self.config_manager)
+            storage_path = str(p) if p else None
 
         if storage_path:
             try:
@@ -2235,108 +2371,29 @@ class SettingsDialog(QDialog):
         self.ollama_url_edit.setText(ollama_url)
 
         default_model = self.config_manager.get("ollama.default_model", "llama3.2")
-        self.default_model_edit.setText(default_model)
+        self._refresh_ollama_models()
+        self.default_model_edit.setCurrentText(default_model)
 
         auto_start = self.config_manager.get("ollama.auto_start", False)
         self.auto_start_check.setChecked(auto_start)
 
         tools_enabled = self.config_manager.get("ollama.tools.enabled", False)
         self.tools_enabled_check.setChecked(tools_enabled)
+        scrape_webpage_enabled = self.config_manager.get(
+            "ollama.tools.scrape_webpage", False
+        )
+        self.scrape_webpage_check.setChecked(scrape_webpage_enabled)
 
-        # Get current model from parent (MainWindow) if available
-        current_model = None
-        if self.parent() and hasattr(self.parent(), "_current_model"):
-            current_model = self.parent()._current_model
+        # Load model-specific LLM/conversation settings for selected default model
+        self._load_model_specific_ollama_settings(default_model)
 
-        # If no current model, use default model
-        if not current_model:
-            current_model = self.config_manager.get("ollama.default_model", "llama3.2")
-
-        # Try to load model-specific settings first
-        model_settings = self.config_manager.get_llm_model_setting(current_model)
-
-        # LLM Parameters - use model-specific or fall back to global defaults
-        if model_settings and "llm_params" in model_settings:
-            llm_params = model_settings["llm_params"]
-            num_ctx = llm_params.get(
-                "num_ctx", self.config_manager.get("ollama.llm_params.num_ctx", 4096)
-            )
-            temperature = llm_params.get(
-                "temperature",
-                self.config_manager.get("ollama.llm_params.temperature", 0.7),
-            )
-            top_p = llm_params.get(
-                "top_p", self.config_manager.get("ollama.llm_params.top_p", 0.9)
-            )
-            top_k = llm_params.get(
-                "top_k", self.config_manager.get("ollama.llm_params.top_k", 40)
-            )
-            repeat_penalty = llm_params.get(
-                "repeat_penalty",
-                self.config_manager.get("ollama.llm_params.repeat_penalty", 1.1),
-            )
-            num_predict = llm_params.get(
-                "num_predict",
-                self.config_manager.get("ollama.llm_params.num_predict", -1),
-            )
-        else:
-            # Use global defaults
-            num_ctx = self.config_manager.get("ollama.llm_params.num_ctx", 4096)
-            temperature = self.config_manager.get("ollama.llm_params.temperature", 0.7)
-            top_p = self.config_manager.get("ollama.llm_params.top_p", 0.9)
-            top_k = self.config_manager.get("ollama.llm_params.top_k", 40)
-            repeat_penalty = self.config_manager.get(
-                "ollama.llm_params.repeat_penalty", 1.1
-            )
-            num_predict = self.config_manager.get("ollama.llm_params.num_predict", -1)
-
-        self.context_window_spin.setValue(num_ctx)
-        self.temperature_spin.setValue(temperature)
-        self.top_p_spin.setValue(top_p)
-        self.top_k_spin.setValue(top_k)
-        self.repeat_penalty_spin.setValue(repeat_penalty)
-        self.max_tokens_spin.setValue(num_predict)
-
-        # Conversation Settings - use model-specific or fall back to global defaults
-        if model_settings and "conversation" in model_settings:
-            conv_settings = model_settings["conversation"]
-            system_prompt = conv_settings.get(
-                "system_prompt",
-                self.config_manager.get(
-                    "ollama.conversation.system_prompt",
-                    "You are a helpful AI assistant.",
-                ),
-            )
-            max_history = conv_settings.get(
-                "max_history_messages",
-                self.config_manager.get("ollama.conversation.max_history_messages", 20),
-            )
-            use_explicit = conv_settings.get(
-                "use_explicit_history",
-                self.config_manager.get(
-                    "ollama.conversation.use_explicit_history", False
-                ),
-            )
-        else:
-            # Use global defaults
-            system_prompt = self.config_manager.get(
-                "ollama.conversation.system_prompt", "You are a helpful AI assistant."
-            )
-            max_history = self.config_manager.get(
-                "ollama.conversation.max_history_messages", 20
-            )
-            use_explicit = self.config_manager.get(
-                "ollama.conversation.use_explicit_history", False
-            )
-
-        self.system_prompt_edit.setPlainText(system_prompt)
-        self.max_history_spin.setValue(max_history)
-        self.explicit_history_check.setChecked(use_explicit)
-
-        # Models
-        model_path = self.config_manager.get("models.storage_path")
-        if model_path:
-            self.model_path_edit.setText(model_path)
+        # Image model storage (separate from global models.storage_path)
+        image_storage_p = get_image_storage_path(self.config_manager)
+        image_model_path = (
+            str(image_storage_p) if image_storage_p else default_hf_cache_suggestion()
+        )
+        if image_model_path:
+            self.model_path_edit.setText(image_model_path)
 
         auto_download = self.config_manager.get("models.auto_download", False)
         self.auto_download_check.setChecked(auto_download)
@@ -2702,6 +2759,10 @@ class SettingsDialog(QDialog):
 
     def save_settings(self):
         """Save settings to config."""
+        # Reload from disk first so manually edited keys that don't exist in UI
+        # (e.g. ollama.tools.scrape_webpage) are not overwritten by stale memory.
+        self.config_manager.reload_config()
+
         # General
         self.config_manager.set("ui.theme", self.theme_combo.currentText())
 
@@ -2717,18 +2778,18 @@ class SettingsDialog(QDialog):
 
         # Ollama
         self.config_manager.set("ollama.base_url", self.ollama_url_edit.text())
-        self.config_manager.set("ollama.default_model", self.default_model_edit.text())
+        selected_model = self.default_model_edit.currentText().strip()
+        self.config_manager.set("ollama.default_model", selected_model)
         self.config_manager.set("ollama.auto_start", self.auto_start_check.isChecked())
         self.config_manager.set("ollama.tools.enabled", self.tools_enabled_check.isChecked())
+        self.config_manager.set(
+            "ollama.tools.scrape_webpage", self.scrape_webpage_check.isChecked()
+        )
 
-        # Get current model from parent (MainWindow) if available
-        current_model = None
-        if self.parent() and hasattr(self.parent(), "_current_model"):
-            current_model = self.parent()._current_model
-
-        # If no current model, use default model
-        if not current_model:
-            current_model = self.config_manager.get("ollama.default_model", "llama3.2")
+        # Save model-specific parameters for model selected in Settings dialog
+        current_model = selected_model or self.config_manager.get(
+            "ollama.default_model", "llama3.2"
+        )
 
         # Save LLM Parameters - save to model-specific settings if model is set
         llm_params = {
@@ -2780,14 +2841,13 @@ class SettingsDialog(QDialog):
             self.explicit_history_check.isChecked(),
         )
 
-        # Models
+        # Image model storage (kept separate from global models.storage_path)
         model_path = self.model_path_edit.text()
         if model_path:
             manager = ModelManager(model_path)
             is_valid, error = manager.validate_path(model_path)
             if is_valid:
-                manager.setup_environment_variables()
-                self.config_manager.set("models.storage_path", model_path)
+                self.config_manager.set("image_gen.storage_path", model_path)
             else:
                 QMessageBox.warning(self, "Invalid Path", error)
                 return

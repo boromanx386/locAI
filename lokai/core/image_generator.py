@@ -3,7 +3,6 @@ Image Generator for locAI.
 Stable Diffusion image generation with configurable model location.
 """
 
-import os
 from pathlib import Path
 from typing import Optional, Dict, Any
 from PIL import Image
@@ -43,27 +42,6 @@ class ImageGenerator:
         )
         self.active_loras = []  # Track loaded LoRAs
         self._img2img_pipeline = None  # Cached img2img pipeline (reuses components)
-
-        # Setup environment if path provided
-        if storage_path:
-            self.setup_environment(storage_path)
-
-    def setup_environment(self, storage_path: str):
-        """
-        Setup environment variables for Hugging Face cache.
-
-        Args:
-            storage_path: Path to model storage
-        """
-        storage = Path(storage_path)
-        diffusers_path = storage / "diffusers"
-
-        os.environ["HF_HOME"] = str(storage)
-        os.environ["TRANSFORMERS_CACHE"] = str(storage)
-        os.environ["HF_DATASETS_CACHE"] = str(storage)
-        os.environ["HF_HUB_CACHE"] = str(storage)
-        os.environ["DIFFUSERS_CACHE"] = str(diffusers_path)
-        os.environ["HF_DIFFUSERS_CACHE"] = str(diffusers_path)
 
     def is_available(self) -> bool:
         """Check if image generation is available."""
@@ -112,6 +90,8 @@ class ImageGenerator:
         print(f"Loading model: {model_name}")
 
         try:
+            cache_kwargs = {"cache_dir": self.storage_path} if self.storage_path else {}
+
             # Check if it's a local .safetensors file
             if model_name.endswith(".safetensors") or Path(model_name).is_file():
                 # Load from single file
@@ -148,6 +128,7 @@ class ImageGenerator:
                             torch_dtype=torch.float16,
                             use_safetensors=True,
                             variant="fp16",  # Use FP16 variant if available (optimized VAE)
+                            **cache_kwargs,
                         )
                         print("Loaded as SDXL model (float16, fp16 variant)")
                     except Exception as e:
@@ -156,6 +137,7 @@ class ImageGenerator:
                             model_name,
                             torch_dtype=torch.float16,
                             use_safetensors=True,
+                            **cache_kwargs,
                         )
                         print("Loaded as SDXL model (float16)")
                 except Exception as e:
@@ -166,6 +148,7 @@ class ImageGenerator:
                         model_name,
                         torch_dtype=torch.float16,
                         use_safetensors=True,
+                        **cache_kwargs,
                     )
                     print("Loaded as base SD model (float16)")
 
