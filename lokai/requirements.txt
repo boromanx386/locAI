@@ -10,27 +10,12 @@ youtube-transcript-api==1.2.3
 deep-translator==1.11.4
 beautifulsoup4==4.14.3
 
-# TTS
+# TTS (works without CUDA)
 kokoro==0.9.4
 soundfile==0.13.1
 pygame==2.5.2
 pocket-tts==1.0.1
 scipy==1.16.1
 
-# Image / Video / Audio (diffusers) – requires CUDA GPU for acceleration.
-# Tested with PyTorch 2.9.1+cu128 on RTX 5060 Ti 16GB; also runs on RTX 2080 8GB. Install a CUDA build from pytorch.org if needed.
-torch==2.9.1+cu128
-torchsde==0.2.6
-diffusers==0.37.0.dev0
-transformers==4.56.0
-peft==0.18.1
-numpy==1.26.4
-
 # Global shortcuts
 keyboard==0.13.5
-
-# ASR (optional – voice input; uncomment if you need it)
-# Cython>=0.29.0
-# nemo_toolkit[asr] @ git+https://github.com/NVIDIA/NeMo.git@main
-# sounddevice>=0.4.0
-# webrtcvad>=2.0.10

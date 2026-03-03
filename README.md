@@ -16,7 +16,7 @@ locAI is a desktop AI assistant that combines Large Language Models (LLM), Image
 
 ## Features
 
-- **LLM Chat**: Chat with AI models via Ollama (llama3.2, mistral, codellama, and more)
+- **LLM Chat**: Chat with AI models via Ollama ([Qwen3.5](https://ollama.com/library/qwen3.5), [Qwen3-VL](https://ollama.com/library/qwen3-vl), ministral-3:14b, and more)
 - **Image Generation**: Generate images using Stable Diffusion (optional)
 - **Video Generation**: Create videos from images using Stable Video Diffusion (SVD) - optional
 - **Audio Generation**: Generate audio using Stable Audio Open - optional
@@ -30,31 +30,41 @@ locAI is a desktop AI assistant that combines Large Language Models (LLM), Image
 ## Requirements
 
 ### Essential
-- **Python 3.12** (developed and tested on 3.12; 3.10 and 3.11 should work but are not regularly tested)
+- **Python 3.12** (developed and tested on 3.12;
 - **Ollama** – install from [ollama.com](https://ollama.com/download) and ensure it’s in your PATH
-- Dependencies from `lokai/requirements.txt` (see below)
+- Dependencies from one of `lokai/requirements*.txt` (see below)
 
-### What’s in requirements.txt
+### Requirements files (pick one)
+
+| File | Contents | For whom |
+|------|----------|----------|
+| `requirements.txt` | Core, Tools, TTS, shortcuts | Chat + TTS only (no GPU needed) |
+| `requirements-image.txt` | Above + torch, diffusers, peft (image/video/audio) | Image, video, audio generation (NVIDIA GPU) |
+| `requirements-full.txt` | Above + ASR (NeMo) | Full features including voice input |
+
+**Base (`requirements.txt`):**
 - **Core**: PySide6, requests, Pillow (GUI, Ollama API, images)
-- **Tools**: ddgs, yt-dlp, youtube-transcript-api, deep-translator, beautifulsoup4 (web search, YouTube, translate, scrape – beautifulsoup4 is optional; without it, `scrape_webpage` is unavailable)
-- **TTS**: kokoro, soundfile, pygame, pocket-tts, scipy (Kokoro and/or PocketTTS)
-- **Image/Video/Audio**: torch, diffusers, transformers, peft, numpy (Stable Diffusion, SVD, Stable Audio)
+- **Tools**: ddgs, yt-dlp, youtube-transcript-api, deep-translator, beautifulsoup4 (web search, YouTube, translate, scrape; beautifulsoup4 optional—without it, `scrape_webpage` is unavailable)
+- **TTS**: kokoro, soundfile, pygame, pocket-tts, scipy (Kokoro and/or PocketTTS; works without CUDA)
 - **Other**: keyboard (global shortcuts)
 
-### Optional – ASR (voice input)
-ASR (NVIDIA NeMo) is **not** installed by default. To enable voice input, uncomment the ASR block in `lokai/requirements.txt` and install:
+**Image (`requirements-image.txt`):**  
+Adds torch, diffusers, transformers, peft, numpy for Stable Diffusion, SVD, Stable Audio. **Install PyTorch with CUDA *before* running `pip install -r requirements-image.txt`** (see Optional – GPU below).
 
-```bash
-pip install Cython>=0.29.0 sounddevice webrtcvad
-pip install "nemo_toolkit[asr] @ git+https://github.com/NVIDIA/NeMo.git@main"
-```
+**Full (`requirements-full.txt`):**  
+Adds ASR (NVIDIA NeMo) for voice input. Heavy install (~several GB).
 
 ### Optional – BeautifulSoup (scrape_webpage)
 The `scrape_webpage` tool uses BeautifulSoup4 to parse HTML. If `beautifulsoup4` is not installed, the app works normally but `scrape_webpage` will not be available. To use it: `pip install beautifulsoup4`. It is disabled by default; enable it in **Settings → Ollama → Tools** or manually in config: `ollama.tools.scrape_webpage: true`.
 
 ### Optional – GPU (image / video / audio)
 - **NVIDIA GPU with CUDA** for acceleration (recommended for image, video, and audio generation).
-- Tested with **PyTorch 2.9.1+cu128** on **RTX 5060 Ti 16GB**; also runs on older 8GB cards (e.g. RTX 2080). Install the PyTorch build that matches your CUDA version from [pytorch.org](https://pytorch.org/get-started/locally/) if the default from `requirements.txt` does not.
+- Use `requirements-image.txt` or `requirements-full.txt`. **Install PyTorch with CUDA *before* the rest:**
+  ```bash
+  pip install torch==2.9.1 --index-url https://download.pytorch.org/whl/cu128
+  ```
+  Replace `cu128` with your CUDA version (e.g. `cu118`, `cu124`) from [pytorch.org](https://pytorch.org/get-started/locally/).
+- Tested on **RTX 5060 Ti 16GB** and **RTX 2080 8GB**.
 
 ## Installation
 
@@ -71,35 +81,37 @@ The `scrape_webpage` tool uses BeautifulSoup4 to parse HTML. If `beautifulsoup4`
 After Ollama is installed, open a terminal and run:
 
 ```bash
-ollama pull llama3.2
+ollama pull qwen3.5:9b
 ```
 
-This downloads the Llama 3.2 model (approximately 2GB).
+This downloads the [Qwen3.5:9b](https://ollama.com/library/qwen3.5) model (multimodal, 256K context, ~6.6GB).
 
-**Other popular models:**
-- `ollama pull mistral` - Mistral 7B
-- `ollama pull codellama` - Code Llama
-- `ollama pull llava` - Vision model (for image understanding)
+**Other recommended models:**
+- `ollama pull qwen3-vl` – Vision model ([Qwen3-VL](https://ollama.com/library/qwen3-vl))
+- `ollama pull ministral-3:14b` – Ministral 3 14B
 
 ### 3. Install locAI
 
-From the project root (the folder that contains the `lokai` directory):
+Choose one of the following (from project root or from inside `lokai`):
 
+**Base (chat + TTS only):**
 ```bash
 pip install -r lokai/requirements.txt
 ```
 
-Or from inside `lokai`:
-
+**With image/video/audio (NVIDIA GPU):** Install PyTorch with CUDA first, then:
 ```bash
-cd lokai
-pip install -r requirements.txt
+pip install torch==2.9.1 --index-url https://download.pytorch.org/whl/cu128
+pip install -r lokai/requirements-image.txt
 ```
 
-**Notes:**
-- TTS: use **Kokoro** (multi-language) and/or **PocketTTS** (voice cloning); both are in requirements.
-- Image/Video/Audio: need PyTorch + diffusers (in requirements). For GPU, install a CUDA build from [pytorch.org](https://pytorch.org/get-started/locally/) (tested 2.9.1+cu128 on RTX 5060 Ti 16GB; also runs on RTX 2080 8GB). First run will download models.
-- ASR (voice input): optional; uncomment the ASR section in `requirements.txt` and install as in the Optional – ASR section above.
+**Full (includes ASR voice input):**
+```bash
+pip install torch==2.9.1 --index-url https://download.pytorch.org/whl/cu128
+pip install -r lokai/requirements-full.txt
+```
+
+Replace `cu128` with your CUDA version if different (see Optional – GPU above).
 
 ### 4. Run locAI
 
@@ -132,17 +144,27 @@ After you finish the wizard, the app will close. Start it again so the chosen fo
 3. Type your message and press Send
 4. The AI response will stream in real-time
 
+### Attaching files to chat
+
+**Images:** Paste (Ctrl+V) or drag & drop onto the chat input. Supported: JPG, PNG, BMP, GIF, TIFF. Use a vision-capable model (e.g. qwen3.5, qwen3-vl) to discuss images. See Images and vision below.
+
+**Text/code files:** Drag & drop files onto the chat input area. Supported extensions include `.txt`, `.md`, `.json`, `.yaml`, `.py`, `.js`, `.ts`, `.html`, `.css`, `.c`, `.cpp`, `.rs`, `.go`, `.java`, `.sql`, `.sh`, and many other text/code formats. Up to 5 files, 10 MB each; content is truncated at 50k characters. The file contents are sent as part of the prompt so the model can analyze or edit them. Attachments can be enabled/disabled and max file count adjusted in config (`chat.attachments.enabled`, `chat.attachments.max_files`).
+
 ### Settings
 
 Access settings via **File > Preferences** or press `Ctrl+,`
 
 **Settings tabs:**
 - **General**: Theme, prompt templates, global shortcuts
-- **Ollama**: Base URL, default model, auto-start, LLM parameters
+- **Ollama**: Base URL, default model, auto-start, LLM parameters (including context window)
 - **Models**: Hugging Face / model storage path (image, video, audio, ASR)
 - **TTS**: Engine (Kokoro or PocketTTS), voice, voice cloning, auto-speak
 - **ASR**: ASR settings (if NeMo is installed)
 - **RAG**: Semantic memory (embeddings), embedding model, CPU/GPU, memory options
+
+### System monitoring (CPU, RAM, VRAM)
+
+The **top-right corner** of the window shows live CPU, RAM and GPU (VRAM) usage. This helps you track memory use when running LLM, image generation, or TTS. To adapt when VRAM is high: change the **model** (dropdown in the status bar) to a smaller one, or reduce **Context Window** in **Settings → Ollama → LLM Generation Parameters**. The monitor uses `psutil` and `nvidia-ml-py` (pynvml); if no GPU is detected, only CPU and RAM are shown.
 
 ### RAG / Semantic memory (embeddings)
 
@@ -159,11 +181,11 @@ RAG gives the model a “memory” of important bits from the conversation by st
 **Chat with images (vision models):**
 - You can **attach images** to a message (or paste) in the chat. Supported formats: JPG, PNG, BMP, GIF, TIFF.
 - Images are **resized** if larger than 1024 px (aspect ratio kept), converted to JPEG (quality 85), then to **base64** and sent to Ollama in the same request as your text (`images` array in the API).
-- You must use a **vision-capable model** (e.g. **llava**, **llama3.2-vision**, **bakllava**, **moondream**, **cogvlm**). The model dropdown in locAI shows both plain LLM and vision models; vision models are detected by name or by Ollama’s “vision” capability.
+- You must use a **vision-capable model** (e.g. **qwen3.5**, **qwen3-vl**, **llava**, **bakllava**, **moondream**). The model dropdown in locAI shows both plain LLM and vision models; vision models are detected by name or by Ollama’s “vision” capability.
 - When the request includes images, the app sends them **without** previous conversation context (vision models often work better that way). After the reply, context is cleared for the next turn to avoid confusion.
 
 **Image generation (Stable Diffusion):**
-- Separate from vision: this **creates** images from text (or image→image) using **Stable Diffusion** (diffusers), not Ollama. Models and outputs use the **Hugging Face folder** you set in the wizard or in **Settings → Models**. It works with **all SD-compatible models and checkpoints**: base models like SDXL, SD 2.1, SD 1.5, plus community checkpoints from [Civitai](https://civitai.com) and similar (e.g. Il, Pony). Place downloaded models (e.g. `.safetensors` or diffusers-style) in your Hugging Face folder—subfolders are fine; the app will find them. **LoRA** files must go in the **`loras`** subfolder of that HF folder (e.g. `YourHFFolder/loras/`); the app only lists LoRAs from there (Settings → Image generation → LoRA tab). Generated images can then be attached in chat for a vision model to discuss, or used for **Generate Video** (SVD).
+- Separate from vision: this **creates** images from text (or image→image) using **Stable Diffusion** (diffusers), not Ollama. Models and outputs use the **Hugging Face folder** you set in the wizard or in **Settings → Models**. It works with **all SD-compatible models and checkpoints**: base models like SDXL, SD 2.1, SD 1.5, plus community checkpoints from [Civitai](https://civitai.com) and similar. Place downloaded models (e.g. `.safetensors` or diffusers-style) in your Hugging Face folder—subfolders are fine; the app will find them. **LoRA** files must go in the **`loras`** subfolder of that HF folder (e.g. `YourHFFolder/loras/`); the app only lists LoRAs from there (Settings → Image generation → LoRA tab). Generated images can then be attached in chat for a vision model to discuss, or used for **Generate Video** (SVD).
 - **Edit image (img2img):** Same principle as vision—you must **add the image to the chat** first (attach or paste). Then use the edit/image option on that message; the attached image is used as the source for img2img (strength and steps are in Settings → Image generation).
 
 ### Tools (function calling)
@@ -179,7 +201,7 @@ The model can call **tools** (web search, weather, YouTube, translate, etc.) whe
 3. The model can call several tools in sequence before giving you the final answer. Tool execution is done by locAI; only public HTTP/HTTPS URLs are allowed (localhost and private IPs are blocked for safety).
 
 **Requirements:**  
-Install dependencies from `requirements.txt` (e.g. `ddgs`, `yt-dlp`, `deep-translator`, `beautifulsoup4`). No API keys are required for the default tools. **BeautifulSoup4** is optional—the app runs without it; only `scrape_webpage` is unavailable. If installed, you can enable it in Settings or by setting `ollama.tools.scrape_webpage` to `true` in your config file.
+Install dependencies from `requirements.txt` or another `requirements*.txt` (e.g. `ddgs`, `yt-dlp`, `deep-translator`, `beautifulsoup4`). No API keys are required for the default tools. **BeautifulSoup4** is optional—the app runs without it; only `scrape_webpage` is unavailable. If installed, you can enable it in Settings or by setting `ollama.tools.scrape_webpage` to `true` in your config file.
 
 ### Text-to-Speech
 
@@ -276,13 +298,13 @@ Tested with **PyTorch 2.9.1+cu128** on **RTX 5060 Ti 16GB**; also runs on **RTX 
 
 ### No Models Available
 
-1. Install a model: `ollama pull llama3.2`
+1. Install a model: `ollama pull qwen3.5:9b`
 2. Click "Refresh" in the status panel
 3. Verify models: `ollama list`
 
 ### Image Generation Not Working
 
-1. Ensure full requirements are installed: `pip install -r lokai/requirements.txt` (from project root) or `pip install -r requirements.txt` (from inside `lokai/`)
+1. Use `requirements-image.txt` or `requirements-full.txt`. Install PyTorch with CUDA first (see Optional – GPU), then `pip install -r lokai/requirements-image.txt`
 2. Check that your Hugging Face folder (Settings → Models) has enough free space (models are several GB)
 3. For GPU: install a CUDA build of PyTorch from [pytorch.org](https://pytorch.org/get-started/locally/)
 4. If you see "CUDA out of memory", the app will try to unload models automatically; close other GPU apps or use a smaller model
@@ -309,7 +331,7 @@ The application is optimized for 8GB+ GPUs, but if you have less VRAM, you may n
 
 ### ASR Not Working
 
-1. Uncomment the ASR block in `lokai/requirements.txt`, then: `pip install Cython>=0.29.0 sounddevice webrtcvad` and `pip install "nemo_toolkit[asr] @ git+https://github.com/NVIDIA/NeMo.git@main"`
+1. Install `requirements-full.txt`: `pip install -r lokai/requirements-full.txt` (install PyTorch with CUDA first if you use GPU)
 2. ASR models are downloaded to your Hugging Face folder on first use
 3. Check microphone permissions (e.g. Windows Settings)
 4. In Settings → ASR, verify the correct input device is selected
@@ -319,7 +341,9 @@ The application is optimized for 8GB+ GPUs, but if you have less VRAM, you may n
 ```
 lokai/
 ├── main.py             # Entry point
-├── requirements.txt    # Dependencies (core, tools, TTS, diffusers; ASR optional)
+├── requirements.txt        # Base: core, tools, TTS
+├── requirements-image.txt  # + image/video/audio (torch, diffusers)
+├── requirements-full.txt   # + ASR (NeMo)
 ├── config/
 │   └── default_config.json
 ├── core/               # Core logic (no UI)
@@ -351,7 +375,7 @@ lokai/
 
 ### Running from source
 
-Same as **Installation** above: from project root run `pip install -r lokai/requirements.txt` then `python -m lokai`, or from inside `lokai/` use `pip install -r requirements.txt` and `python main.py`.
+Same as **Installation** above: pick the appropriate `requirements*.txt` (base, image, or full), install, then run `python -m lokai` from project root.
 
 ### Building
 
