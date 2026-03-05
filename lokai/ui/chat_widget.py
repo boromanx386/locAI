@@ -15,7 +15,15 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
 )
-from PySide6.QtCore import Signal, Qt, QTimer, QEvent, QSize, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import (
+    Signal,
+    Qt,
+    QTimer,
+    QEvent,
+    QSize,
+    QPropertyAnimation,
+    QEasingCurve,
+)
 from PySide6.QtGui import (
     QFont,
     QPixmap,
@@ -142,7 +150,11 @@ class ChatBubbleTextEdit(QTextEdit):
         if obj == self.viewport() and event.type() == QEvent.Type.MouseMove:
             # Check if over a link
             try:
-                pos = event.position().toPoint() if hasattr(event, 'position') else event.pos()
+                pos = (
+                    event.position().toPoint()
+                    if hasattr(event, "position")
+                    else event.pos()
+                )
             except:
                 pos = event.pos()
             anchor = self.anchorAt(pos)
@@ -158,7 +170,11 @@ class ChatBubbleTextEdit(QTextEdit):
         super().mouseMoveEvent(event)
         # Use pos() for compatibility (PySide6/Qt6)
         try:
-            pos = event.position().toPoint() if hasattr(event, 'position') else event.pos()
+            pos = (
+                event.position().toPoint()
+                if hasattr(event, "position")
+                else event.pos()
+            )
         except:
             pos = event.pos()
         anchor = self.anchorAt(pos)
@@ -174,7 +190,11 @@ class ChatBubbleTextEdit(QTextEdit):
         # Check if clicked position is on a link
         # Use pos() for compatibility (PySide6/Qt6)
         try:
-            pos = event.position().toPoint() if hasattr(event, 'position') else event.pos()
+            pos = (
+                event.position().toPoint()
+                if hasattr(event, "position")
+                else event.pos()
+            )
         except:
             pos = event.pos()
         anchor = self.anchorAt(pos)
@@ -183,7 +203,7 @@ class ChatBubbleTextEdit(QTextEdit):
             QDesktopServices.openUrl(QUrl(anchor))
             event.accept()
             return
-        
+
         # Otherwise, use default behavior (text selection)
         super().mousePressEvent(event)
 
@@ -258,6 +278,7 @@ class ChatBubble(QFrame):
         # Add audio player if provided
         if self.audio_path:
             from lokai.ui.audio_player_widget import AudioPlayerWidget
+
             self.audio_player = AudioPlayerWidget(self.audio_path)
             layout.addWidget(self.audio_player)
         else:
@@ -498,7 +519,9 @@ class ChatBubble(QFrame):
 
             # Only allow http/https URLs, and reject ones containing quotes to keep href safe
             url_lower = url.lower()
-            if not (url_lower.startswith("http://") or url_lower.startswith("https://")):
+            if not (
+                url_lower.startswith("http://") or url_lower.startswith("https://")
+            ):
                 return link_text
             if '"' in url or "'" in url:
                 return link_text
@@ -618,6 +641,7 @@ class ChatBubble(QFrame):
                 self._stream_refresh_timer.timeout.connect(self._flush_stream_display)
             if not self._stream_refresh_timer.isActive():
                 self._stream_refresh_timer.start(50)
+
     def _flush_stream_display(self):
         """Apply current_text to label (throttled streaming refresh)."""
         if not hasattr(self, "label") or self.label is None:
@@ -628,7 +652,10 @@ class ChatBubble(QFrame):
 
     def flush_display(self):
         """Flush pending streaming content to label immediately (call when stream ends)."""
-        if self._stream_refresh_timer is not None and self._stream_refresh_timer.isActive():
+        if (
+            self._stream_refresh_timer is not None
+            and self._stream_refresh_timer.isActive()
+        ):
             self._stream_refresh_timer.stop()
         self._flush_stream_display()
 
@@ -675,7 +702,9 @@ class ChatBubble(QFrame):
         self.thinking_text_view.setFrameShape(QTextEdit.Shape.NoFrame)
         self.thinking_text_view.setMinimumHeight(24)
         self.thinking_text_view.setMaximumHeight(2000)
-        self.thinking_text_view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.thinking_text_view.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
         self.thinking_text_view.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
@@ -712,7 +741,9 @@ class ChatBubble(QFrame):
             arrow = "▶" if self.thinking_collapsed else "▼"
             self.thinking_header_btn.setText(f"{arrow} Thinking")
         if self.thinking_text_view is not None:
-            self.thinking_text_view.setVisible(not self.thinking_collapsed and has_thinking)
+            self.thinking_text_view.setVisible(
+                not self.thinking_collapsed and has_thinking
+            )
 
     def add_thinking_text(self, text: str):
         """Append thinking text in assistant bubble."""
@@ -831,8 +862,12 @@ class ChatBubble(QFrame):
             )
 
         remember_message_action = menu.addAction("Remember whole message")
-        full_plain_text = self.label.toPlainText() if hasattr(self, "label") and self.label else ""
-        remember_message_action.setEnabled(bool(full_plain_text and full_plain_text.strip()))
+        full_plain_text = (
+            self.label.toPlainText() if hasattr(self, "label") and self.label else ""
+        )
+        remember_message_action.setEnabled(
+            bool(full_plain_text and full_plain_text.strip())
+        )
         if full_plain_text and full_plain_text.strip():
             remember_message_action.triggered.connect(
                 lambda: self.remember_message.emit(
@@ -841,7 +876,9 @@ class ChatBubble(QFrame):
             )
 
         memory_stats_action = menu.addAction("Memory stats")
-        memory_stats_action.triggered.connect(lambda: self.memory_stats_requested.emit())
+        memory_stats_action.triggered.connect(
+            lambda: self.memory_stats_requested.emit()
+        )
 
         # Show menu at cursor position
         menu.exec(self.label.mapToGlobal(position))
@@ -874,20 +911,24 @@ class ChatBubble(QFrame):
     def _extract_code_blocks(self) -> list:
         """
         Extract all code blocks from message text.
-        
+
         Returns:
             List of dicts with 'language' and 'code'
         """
         if not hasattr(self, "label") or not self.label:
             return []
-        
+
         # Get original markdown text
-        full_text = self.current_text if hasattr(self, "current_text") else self.label.toPlainText()
+        full_text = (
+            self.current_text
+            if hasattr(self, "current_text")
+            else self.label.toPlainText()
+        )
         if not full_text:
             return []
-        
+
         # Find all code blocks: ```language\ncode\n``` or ```\ncode\n```
-        pattern = r'```(\w+)?\n(.*?)```'
+        pattern = r"```(\w+)?\n(.*?)```"
         code_blocks: list[dict] = []
         for match in re.finditer(pattern, full_text, re.DOTALL):
             language = (match.group(1) or "").strip()
@@ -899,22 +940,30 @@ class ChatBubble(QFrame):
                         "code": code_content,
                     }
                 )
-        
+
         return code_blocks
 
     def _copy_code_block(self, code_content: str):
         """Copy code block content to clipboard."""
         if not code_content:
             return
-        
+
         from PySide6.QtWidgets import QApplication
+
         clipboard = QApplication.clipboard()
         clipboard.setText(code_content)
-        
+
         # Show brief feedback
         if hasattr(self, "label") and self.label:
             self.label.setToolTip("Code block copied to clipboard")
-            QTimer.singleShot(2000, lambda: self.label.setToolTip("") if hasattr(self, "label") and self.label else None)
+            QTimer.singleShot(
+                2000,
+                lambda: (
+                    self.label.setToolTip("")
+                    if hasattr(self, "label") and self.label
+                    else None
+                ),
+            )
 
     def _show_image_context_menu(self, position):
         """Show context menu for image (right-click)."""
@@ -961,11 +1010,11 @@ class ChatBubble(QFrame):
                 subprocess.run(["xdg-open", self.image_path], check=False)
         except Exception as e:
             print(f"Error opening image: {e}")
-    
+
     def __del__(self):
         """Cleanup resources when bubble is destroyed."""
         # Clean up audio player if it exists
-        if hasattr(self, 'audio_player') and self.audio_player is not None:
+        if hasattr(self, "audio_player") and self.audio_player is not None:
             try:
                 self.audio_player.cleanup()
             except Exception as e:
@@ -1074,7 +1123,7 @@ class ChatWidget(QWidget):
         self.image_mode = False  # Toggle for image generation mode
         self.audio_mode = False  # Toggle for audio generation mode
         self.seed_locked = False  # Seed lock state
-        
+
         # Auto-stop timer for voice input (30 seconds)
         self.voice_auto_stop_timer = QTimer()
         self.voice_auto_stop_timer.setSingleShot(True)
@@ -1131,7 +1180,9 @@ class ChatWidget(QWidget):
         # Attachments row (chips above input) – hidden when empty
         self.attachments_container = QWidget()
         self.attachments_container.setFixedHeight(44)
-        self.attachments_container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self.attachments_container.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
+        )
         self.attachments_layout = QHBoxLayout()
         self.attachments_layout.setContentsMargins(12, 4, 12, 0)
         self.attachments_layout.setSpacing(6)
@@ -1185,21 +1236,25 @@ class ChatWidget(QWidget):
             self.voice_btn, MaterialIcons.MIC_SVG, size=16, keep_text=False
         )
         self.voice_btn.clicked.connect(self.toggle_voice_input)
-        
+
         # Add shadow effect for pulsing animation
         self.voice_btn_shadow = QGraphicsDropShadowEffect()
         self.voice_btn_shadow.setBlurRadius(10)
         self.voice_btn_shadow.setXOffset(0)
         self.voice_btn_shadow.setYOffset(0)
-        self.voice_btn_shadow.setColor(QColor(231, 76, 60, 0))  # Red, invisible when not active
+        self.voice_btn_shadow.setColor(
+            QColor(231, 76, 60, 0)
+        )  # Red, invisible when not active
         self.voice_btn.setGraphicsEffect(self.voice_btn_shadow)
-        
+
         # Simple pulsing animation - animate blur radius for visible pulsing effect
-        self.voice_btn_animation = QPropertyAnimation(self.voice_btn_shadow, b"blurRadius")
+        self.voice_btn_animation = QPropertyAnimation(
+            self.voice_btn_shadow, b"blurRadius"
+        )
         self.voice_btn_animation.setDuration(500)
         self.voice_btn_animation.setEasingCurve(QEasingCurve.Type.InOutSine)
         self.voice_btn_animation.setLoopCount(-1)
-        
+
         input_layout.addWidget(self.voice_btn)
 
         # Prompt template button
@@ -1294,7 +1349,8 @@ class ChatWidget(QWidget):
         self.status_indicator = QLabel("")
         self.status_indicator.setMaximumHeight(24)
         self.status_indicator.setVisible(False)
-        self.status_indicator.setStyleSheet("""
+        self.status_indicator.setStyleSheet(
+            """
             QLabel {
                 background-color: rgba(74, 158, 255, 0.2);
                 border: 1px solid rgba(74, 158, 255, 0.5);
@@ -1304,7 +1360,8 @@ class ChatWidget(QWidget):
                 font-size: 11px;
                 font-weight: 500;
             }
-        """)
+        """
+        )
         input_layout.addWidget(self.status_indicator)
 
         input_frame_v.addLayout(input_layout)
@@ -1339,12 +1396,17 @@ class ChatWidget(QWidget):
         self.messages_layout.addWidget(welcome)
         self.messages_layout.addStretch()
 
-    def add_user_message(self, message: str, image_path: str = None, message_index: int = -1):
+    def add_user_message(
+        self, message: str, image_path: str = None, message_index: int = -1
+    ):
         """Add user message to chat."""
         # If message is empty but image exists, show image-only message
         display_message = message if message else "📷 Image"
         bubble = ChatBubble(
-            display_message, is_user=True, image_path=image_path, message_index=message_index
+            display_message,
+            is_user=True,
+            image_path=image_path,
+            message_index=message_index,
         )
         # Connect bubble signals to widget signals
         bubble.text_selected_for_tts.connect(self.text_selected_for_tts.emit)
@@ -1358,7 +1420,7 @@ class ChatWidget(QWidget):
 
     def start_ai_message(self, model_name: str = None):
         """Start a new AI message (for streaming).
-        
+
         Args:
             model_name: Optional name of the model being used
         """
@@ -1374,7 +1436,9 @@ class ChatWidget(QWidget):
         # Show status indicator
         if model_name:
             self.status_indicator.setText(f"⚡ {model_name}")
-            self.status_indicator.setToolTip(f"Generating response with {model_name}...")
+            self.status_indicator.setToolTip(
+                f"Generating response with {model_name}..."
+            )
         else:
             self.status_indicator.setText("⚡ Generating...")
             self.status_indicator.setToolTip("Generating response...")
@@ -1871,7 +1935,7 @@ class ChatWidget(QWidget):
                 }
             """
             )
-            # Reset voice button to default blue theme style  
+            # Reset voice button to default blue theme style
             self.voice_btn.setStyleSheet(
                 """
                 QPushButton {
@@ -2047,7 +2111,9 @@ class ChatWidget(QWidget):
         message = self.input_field.toPlainText().strip()
         has_content = bool(message or self.last_uploaded_image)
         has_attach_only = (
-            not self.audio_mode and not self.image_mode and bool(self.pending_attachments)
+            not self.audio_mode
+            and not self.image_mode
+            and bool(self.pending_attachments)
         )
         if not has_content and not has_attach_only:
             return
@@ -2111,9 +2177,7 @@ class ChatWidget(QWidget):
         """Add audio message to chat with waveform player."""
         # Create bubble with audio player
         bubble = ChatBubble(
-            prompt or "Generated audio", 
-            is_user=False, 
-            audio_path=audio_path
+            prompt or "Generated audio", is_user=False, audio_path=audio_path
         )
 
         # Connect bubble signals
@@ -2244,14 +2308,16 @@ class ChatWidget(QWidget):
         chip = QFrame()
         chip.setFixedHeight(36)
         chip.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
-        chip.setStyleSheet("""
+        chip.setStyleSheet(
+            """
             QFrame {
                 background: rgba(74, 158, 255, 0.2);
                 border: 1px solid rgba(74, 158, 255, 0.5);
                 border-radius: 8px;
                 padding: 2px 6px;
             }
-        """)
+        """
+        )
         chip_layout = QHBoxLayout()
         chip_layout.setContentsMargins(6, 2, 4, 2)
         chip_layout.setSpacing(4)
@@ -2262,7 +2328,8 @@ class ChatWidget(QWidget):
         chip_layout.addWidget(label, 1)
         remove_btn = QPushButton("×")
         remove_btn.setFixedSize(22, 22)
-        remove_btn.setStyleSheet("""
+        remove_btn.setStyleSheet(
+            """
             QPushButton {
                 background: rgba(120, 120, 120, 0.4);
                 color: #FFFFFF;
@@ -2275,7 +2342,8 @@ class ChatWidget(QWidget):
                 background: #FF6B6B;
                 color: #FFFFFF;
             }
-        """)
+        """
+        )
         remove_btn.setToolTip("Remove attachment")
         remove_btn.clicked.connect(lambda: self._remove_attachment(path))
         chip_layout.addWidget(remove_btn, 0)
@@ -2330,13 +2398,16 @@ class ChatWidget(QWidget):
             self.pending_attachments.append({"path": p, "name": name, "size": size})
             chip = self._make_attachment_chip(p, name, size)
             # insert before the stretch so chips stay left and don't fill the row
-            self.attachments_layout.insertWidget(self.attachments_layout.count() - 1, chip)
+            self.attachments_layout.insertWidget(
+                self.attachments_layout.count() - 1, chip
+            )
             self._attachment_chips[p] = chip
         if skipped:
             QMessageBox.warning(
                 self,
                 "Some files skipped",
-                "Skipped:\n" + "\n".join(skipped[:10])
+                "Skipped:\n"
+                + "\n".join(skipped[:10])
                 + ("\n..." if len(skipped) > 10 else ""),
             )
         if self.pending_attachments:
@@ -2363,7 +2434,9 @@ class ChatWidget(QWidget):
             self.voice_input_widget = VoiceInputWidget(config_manager)
 
             # Connect signals
-            self.voice_input_widget.transcription_ready.connect(self._on_voice_transcription)
+            self.voice_input_widget.transcription_ready.connect(
+                self._on_voice_transcription
+            )
             self.voice_input_widget.error_occurred.connect(self._on_voice_error)
             self.voice_input_widget.voice_input_started.connect(self._on_voice_started)
             self.voice_input_widget.voice_input_stopped.connect(self._on_voice_stopped)
@@ -2381,7 +2454,10 @@ class ChatWidget(QWidget):
             return
 
         # Check if currently listening
-        if hasattr(self.voice_input_widget, 'is_listening') and self.voice_input_widget.is_listening:
+        if (
+            hasattr(self.voice_input_widget, "is_listening")
+            and self.voice_input_widget.is_listening
+        ):
             # Stop listening
             self.voice_input_widget.stop_voice_input()
             # Reset voice button icon
@@ -2394,7 +2470,7 @@ class ChatWidget(QWidget):
             # Update voice button icon to indicate active
             MaterialIcons.apply_to_button(
                 self.voice_btn, MaterialIcons.MIC_OFF_SVG, size=16, keep_text=False
-                )
+            )
 
     def _on_voice_transcription(self, text: str):
         """Handle voice transcription ready. Inserts text at current cursor position in chat input."""
@@ -2431,12 +2507,14 @@ class ChatWidget(QWidget):
             self.voice_btn, MaterialIcons.MIC_OFF_SVG, size=16, keep_text=False
         )
         # Set shadow to bright red (always red, regardless of mode)
-        self.voice_btn_shadow.setColor(QColor(255, 0, 0, 255))  # Bright red - full opacity
+        self.voice_btn_shadow.setColor(
+            QColor(255, 0, 0, 255)
+        )  # Bright red - full opacity
         # Start pulsing animation - large range for maximum visibility
         self.voice_btn_animation.setStartValue(15)
         self.voice_btn_animation.setEndValue(35)
         self.voice_btn_animation.start()
-        
+
         # Start auto-stop timer (30 seconds)
         self.voice_auto_stop_timer.start(30000)  # 30 seconds
 
@@ -2446,7 +2524,7 @@ class ChatWidget(QWidget):
         # Stop auto-stop timer if running
         if self.voice_auto_stop_timer.isActive():
             self.voice_auto_stop_timer.stop()
-        
+
         # Reset mic button to normal state
         MaterialIcons.apply_to_button(
             self.voice_btn, MaterialIcons.MIC_SVG, size=16, keep_text=False
@@ -2455,10 +2533,10 @@ class ChatWidget(QWidget):
         self.voice_btn_animation.stop()
         self.voice_btn_shadow.setBlurRadius(10)
         self.voice_btn_shadow.setColor(QColor(231, 76, 60, 0))  # Reset to invisible
-    
+
     def _auto_stop_voice_input(self):
         """Automatically stop voice input after 30 seconds."""
-        if self.voice_input_widget and hasattr(self.voice_input_widget, 'is_listening'):
+        if self.voice_input_widget and hasattr(self.voice_input_widget, "is_listening"):
             if self.voice_input_widget.is_listening:
                 print("Auto-stopping voice input after 30 seconds")
                 self.voice_input_widget.stop_voice_input()

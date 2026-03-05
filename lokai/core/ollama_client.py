@@ -546,8 +546,7 @@ class OllamaClient:
     
     def stop_model(self, model_name: str) -> bool:
         """
-        Stop a running Ollama model (like 'ollama stop <model>' command).
-        This immediately stops the model and clears GPU memory.
+        Stop/unload a running Ollama model via API (keep_alive=0).
 
         Args:
             model_name: Name of the model to stop
@@ -555,47 +554,11 @@ class OllamaClient:
         Returns:
             True if successful, False otherwise
         """
-        try:
-            import subprocess
-
-            result = subprocess.run(
-                ["ollama", "stop", model_name],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            
-            try:
-                import torch
-                import gc
-                if torch.cuda.is_available():
-                    torch.cuda.synchronize()
-                    torch.cuda.empty_cache()
-                    try:
-                        torch.cuda.ipc_collect()
-                    except AttributeError:
-                        pass
-                    try:
-                        torch.cuda.reset_peak_memory_stats()
-                    except:
-                        pass
-                    gc.collect()
-            except:
-                pass
-
-            if result.returncode == 0:
-                print(f"Model {model_name} stopped successfully")
-                return True
-            else:
-                print(f"Model {model_name} not running or already stopped")
-                return False
-        except Exception as e:
-            print(f"Error stopping model {model_name}: {e}")
-            return False
+        return self._unload_via_api(model_name)
 
     def unload_model(self, model_name: str) -> bool:
         """
-        Unload a specific Ollama model from VRAM.
+        Unload a specific Ollama model from VRAM via API (keep_alive=0).
 
         Args:
             model_name: Name of the model to unload
@@ -603,103 +566,96 @@ class OllamaClient:
         Returns:
             True if successful, False otherwise
         """
+        return self._unload_via_api(model_name)
+
+    def _unload_via_api(self, model_name: str) -> bool:
+        """
+        Unload a model by sending keep_alive=0 to /api/generate.
+        This is the official Ollama way to immediately free VRAM.
+        Falls back to subprocess 'ollama stop' if the API call fails.
+        """
         try:
-            import subprocess
-
-            result = subprocess.run(
-                ["ollama", "stop", model_name],
-                capture_output=True,
-                text=True,
-                timeout=10,
+            response = self.session.post(
+                f"{self.base_url}/api/generate",
+                json={"model": model_name, "prompt": "", "keep_alive": 0},
+                timeout=15,
             )
-            
-            try:
-                import torch
-                import gc
-                if torch.cuda.is_available():
-                    torch.cuda.synchronize()
-                    torch.cuda.empty_cache()
-                    try:
-                        torch.cuda.ipc_collect()
-                    except AttributeError:
-                        pass
-                    try:
-                        torch.cuda.reset_peak_memory_stats()
-                    except:
-                        pass
-                    gc.collect()
-            except:
-                pass
-
-            if result.returncode == 0:
-                print(f"Model {model_name} unloaded successfully")
+            if response.status_code == 200:
+                print(f"[VRAM] Model '{model_name}' unloaded via API (keep_alive=0)")
                 return True
             else:
-                print(f"Model {model_name} not loaded or already unloaded")
-                return False
+                print(f"[VRAM] API unload failed for '{model_name}': HTTP {response.status_code}, trying subprocess...")
         except Exception as e:
-            print(f"Error unloading model {model_name}: {e}")
+            print(f"[VRAM] API unload error for '{model_name}': {e}, trying subprocess...")
+
+        # Fallback: subprocess ollama stop
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["ollama", "stop", model_name],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0:
+                print(f"[VRAM] Model '{model_name}' stopped via subprocess")
+                return True
+            else:
+                print(f"[VRAM] subprocess stop failed for '{model_name}': {result.stderr.strip()}")
+                return False
+        except Exception as e2:
+            print(f"[VRAM] Both API and subprocess failed for '{model_name}': {e2}")
             return False
 
     def unload_all_models_silent(self) -> None:
         """
         Silently unload all loaded Ollama models to free GPU memory.
-        Gets list of actually loaded models from 'ollama list', then stops each one.
+        Uses /api/ps to get models currently in VRAM, then unloads each via keep_alive=0.
+        Verifies unload by checking /api/ps again after.
         """
         try:
-            import subprocess
+            loaded_models = []
 
-            result = subprocess.run(
-                ["ollama", "list"], capture_output=True, text=True, timeout=10
-            )
-
-            if result.returncode == 0:
-                lines = result.stdout.strip().split("\n")
-                loaded_models = []
-                for line in lines[1:]:  # Skip header
-                    if line.strip():
-                        parts = line.split()
-                        if len(parts) > 0:
-                            model_name = parts[0]
-                            if ":" in model_name:
-                                model_name = model_name.split(":")[0]
-                            if model_name not in loaded_models:
-                                loaded_models.append(model_name)
-
-                for model in loaded_models:
-                    try:
-                        subprocess.run(
-                            ["ollama", "stop", model],
-                            capture_output=True,
-                            text=True,
-                            timeout=5,
-                        )
-                    except:
-                        pass
-
-                if loaded_models:
-                    print(
-                        f"Unloaded {len(loaded_models)} Ollama model(s): {', '.join(loaded_models)}"
-                    )
-                else:
-                    print("No Ollama models were loaded")
-            else:
-                print("Could not get Ollama model list; skipping unload")
-
+            # /api/ps returns only models currently loaded in memory
             try:
-                import torch
-                import gc
+                response = self.session.get(
+                    f"{self.base_url}/api/ps", timeout=5
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    for m in data.get("models", []):
+                        name = m.get("name") or m.get("model", "")
+                        if name and name not in loaded_models:
+                            loaded_models.append(name)
+                    vram_total = sum(
+                        m.get("size_vram", 0) for m in data.get("models", [])
+                    )
+                    print(f"[VRAM] Found {len(loaded_models)} loaded model(s), ~{vram_total / 1024**3:.1f} GB in VRAM: {loaded_models}")
+            except Exception as e:
+                print(f"[VRAM] Error querying /api/ps: {e}")
 
-                if torch.cuda.is_available():
-                    torch.cuda.synchronize()
-                    torch.cuda.empty_cache()
-                    try:
-                        torch.cuda.ipc_collect()
-                    except AttributeError:
-                        pass
-                    gc.collect()
-            except:
-                pass
+            for model in loaded_models:
+                self._unload_via_api(model)
+
+            if loaded_models:
+                # Verify unload worked
+                import time
+                time.sleep(0.5)
+                try:
+                    response = self.session.get(
+                        f"{self.base_url}/api/ps", timeout=5
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+                        still_loaded = [
+                            m.get("name", "?") for m in data.get("models", [])
+                        ]
+                        if still_loaded:
+                            print(f"[VRAM] WARNING: Models still loaded after unload: {still_loaded}")
+                        else:
+                            print(f"[VRAM] Verified: all models unloaded successfully")
+                except Exception:
+                    pass
+            else:
+                print("[VRAM] No Ollama models were loaded in memory")
 
         except Exception as e:
-            print(f"Error in silent unload: {e}")
+            print(f"[VRAM] Error in silent unload: {e}")

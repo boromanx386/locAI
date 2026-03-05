@@ -43,7 +43,14 @@ from lokai.ui.video_worker import VideoGenerationWorker
 from lokai.ui.audio_worker import AudioGenerationWorker
 from lokai.core.asr_engine import ASREngine
 from lokai.core.tools_handler import get_available_tools, execute_tool
-from lokai.core.paths import get_embeddings_dir, get_models_storage_path, get_image_storage_path, get_video_storage_path, get_audio_storage_path, get_asr_storage_path
+from lokai.core.paths import (
+    get_embeddings_dir,
+    get_models_storage_path,
+    get_image_storage_path,
+    get_video_storage_path,
+    get_audio_storage_path,
+    get_asr_storage_path,
+)
 from lokai.ui.attachments import read_text_file_with_limits, format_file_size
 
 
@@ -169,7 +176,9 @@ class MainWindow(QMainWindow):
     def _init_embedding_components(self):
         """Initialize embedding components delayed to speed up startup."""
         try:
-            base_url = self.config_manager.get("ollama.base_url", "http://localhost:11434")
+            base_url = self.config_manager.get(
+                "ollama.base_url", "http://localhost:11434"
+            )
             force_cpu = self.config_manager.get("rag.force_cpu", True)
             self.embedding_client = EmbeddingClient(base_url, force_cpu=force_cpu)
             # Manual-only: never auto-embed.
@@ -200,6 +209,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"Error initializing embedding components: {e}")
             import traceback
+
             traceback.print_exc()
             # Disable embedding on error
             self.embedding_enabled = False
@@ -219,7 +229,9 @@ class MainWindow(QMainWindow):
         """Clear any models that Ollama may have auto-loaded at startup."""
         try:
             if self.ollama_client.is_running():
-                print("[Startup] Clearing any auto-loaded Ollama models to free VRAM...")
+                print(
+                    "[Startup] Clearing any auto-loaded Ollama models to free VRAM..."
+                )
                 self.ollama_client.unload_all_models_silent()
 
                 # Also clear GPU memory to ensure it's freed
@@ -261,7 +273,7 @@ class MainWindow(QMainWindow):
                 print("[Startup] Ollama models unloaded")
         except Exception as e:
             print(f"[Startup] Error unloading Ollama models: {e}")
-    
+
     def _reload_embedding_components(self):
         """Reload embedding components when RAG settings change."""
         # Clean up existing workers
@@ -522,7 +534,11 @@ class MainWindow(QMainWindow):
     def _init_tts_engine(self):
         """Initialize TTS engine if enabled."""
         try:
-            from lokai.core.tts_engine import create_tts_engine, KOKORO_AVAILABLE, POCKET_TTS_AVAILABLE
+            from lokai.core.tts_engine import (
+                create_tts_engine,
+                KOKORO_AVAILABLE,
+                POCKET_TTS_AVAILABLE,
+            )
 
             # Check if TTS is enabled
             if not self.config_manager.get("tts.enabled", True):
@@ -536,11 +552,15 @@ class MainWindow(QMainWindow):
 
             # Check if selected engine is available
             if engine == "kokoro" and not KOKORO_AVAILABLE:
-                print("Kokoro TTS not available. Install with: pip install kokoro soundfile")
+                print(
+                    "Kokoro TTS not available. Install with: pip install kokoro soundfile"
+                )
                 self.tts_engine = None
                 return
             elif engine == "pocket_tts" and not POCKET_TTS_AVAILABLE:
-                print("Pocket TTS not available. Install with: pip install pocket-tts scipy")
+                print(
+                    "Pocket TTS not available. Install with: pip install pocket-tts scipy"
+                )
                 self.tts_engine = None
                 return
 
@@ -555,32 +575,48 @@ class MainWindow(QMainWindow):
                     "kokoro",
                     lang_code=lang_code,
                     voice=voice,
-                    on_finished=on_tts_finished
+                    on_finished=on_tts_finished,
                 )
                 # Update voices in status panel
                 if hasattr(self.status_panel, "update_voices_for_language"):
-                    self.status_panel.update_voices_for_language(lang_code, "kokoro", False)
-                
-                print(f"TTS engine initialized: engine=Kokoro, lang={lang_code}, voice={voice}")
+                    self.status_panel.update_voices_for_language(
+                        lang_code, "kokoro", False
+                    )
+
+                print(
+                    f"TTS engine initialized: engine=Kokoro, lang={lang_code}, voice={voice}"
+                )
             else:  # pocket_tts
-                voice_cloning_enabled = self.config_manager.get("tts.voice_cloning.enabled", False)
-                voice_cloning_file = self.config_manager.get("tts.voice_cloning.file_path", None)
-                
+                voice_cloning_enabled = self.config_manager.get(
+                    "tts.voice_cloning.enabled", False
+                )
+                voice_cloning_file = self.config_manager.get(
+                    "tts.voice_cloning.file_path", None
+                )
+
                 # If voice is "Clone Voice", use cloning file; otherwise use the selected voice
                 actual_voice = voice if voice != "Clone Voice" else "alba"
-                actual_cloning_file = voice_cloning_file if voice == "Clone Voice" and voice_cloning_enabled else None
-                
+                actual_cloning_file = (
+                    voice_cloning_file
+                    if voice == "Clone Voice" and voice_cloning_enabled
+                    else None
+                )
+
                 self.tts_engine = create_tts_engine(
                     "pocket_tts",
                     voice=actual_voice,
                     voice_cloning_file=actual_cloning_file,
-                    on_finished=on_tts_finished
+                    on_finished=on_tts_finished,
                 )
                 # Update voices in status panel (include "Clone Voice" if enabled)
                 if hasattr(self.status_panel, "update_voices_for_language"):
-                    self.status_panel.update_voices_for_language(None, "pocket_tts", voice_cloning_enabled)
-                
-                print(f"TTS engine initialized: engine=Pocket TTS, voice={voice}, cloning={voice == 'Clone Voice'}")
+                    self.status_panel.update_voices_for_language(
+                        None, "pocket_tts", voice_cloning_enabled
+                    )
+
+                print(
+                    f"TTS engine initialized: engine=Pocket TTS, voice={voice}, cloning={voice == 'Clone Voice'}"
+                )
 
             # Set speed
             if hasattr(self.tts_engine, "speed"):
@@ -620,7 +656,9 @@ class MainWindow(QMainWindow):
             storage_path = get_asr_storage_path(self.config_manager)
             # Get device from config (default to CPU)
             device = self.config_manager.get("asr.device", "cpu")
-            self.asr_engine = ASREngine(str(storage_path) if storage_path else None, device=device)
+            self.asr_engine = ASREngine(
+                str(storage_path) if storage_path else None, device=device
+            )
 
             if not self.asr_engine.is_available():
                 print("ASR engine not available (NeMo not installed)")
@@ -628,7 +666,7 @@ class MainWindow(QMainWindow):
                 return
 
             print("ASR engine initialized")
-            
+
             # Preload ASR model by starting and stopping voice input
             # This loads the model in background, avoiding 10-15 second delay on first use
             # Start immediately with minimal delay to ensure chat_widget is ready
@@ -637,51 +675,62 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"Error initializing ASR engine: {e}")
             import traceback
+
             traceback.print_exc()
             self.asr_engine = None
-    
+
     def _preload_asr_by_start_stop(self):
         """Preload ASR model by starting and stopping voice input (like user clicked)."""
         try:
             # Check if voice input widget is available
-            if not hasattr(self, 'chat_widget') or self.chat_widget is None:
+            if not hasattr(self, "chat_widget") or self.chat_widget is None:
                 # Retry after short delay if chat_widget not ready yet
                 QTimer.singleShot(200, self._preload_asr_by_start_stop)
                 return
-            
-            if not hasattr(self.chat_widget, 'voice_input_widget') or self.chat_widget.voice_input_widget is None:
+
+            if (
+                not hasattr(self.chat_widget, "voice_input_widget")
+                or self.chat_widget.voice_input_widget is None
+            ):
                 # Retry after short delay if voice_input_widget not ready yet
                 QTimer.singleShot(200, self._preload_asr_by_start_stop)
                 return
-            
+
             voice_widget = self.chat_widget.voice_input_widget
-            
+
             # Check if asr_worker is available
-            if not hasattr(voice_widget, 'asr_worker') or voice_widget.asr_worker is None:
+            if (
+                not hasattr(voice_widget, "asr_worker")
+                or voice_widget.asr_worker is None
+            ):
                 # Retry after short delay if asr_worker not ready yet
                 QTimer.singleShot(200, self._preload_asr_by_start_stop)
                 return
-            
+
             # Connect to listening_started signal to know when model is loaded
             def on_listening_started():
                 # Model is loaded, now stop voice input
-                QTimer.singleShot(100, lambda: self._stop_voice_input_for_preload(voice_widget))
+                QTimer.singleShot(
+                    100, lambda: self._stop_voice_input_for_preload(voice_widget)
+                )
                 try:
-                    voice_widget.asr_worker.listening_started.disconnect(on_listening_started)
+                    voice_widget.asr_worker.listening_started.disconnect(
+                        on_listening_started
+                    )
                 except:
                     pass  # Already disconnected
-            
+
             voice_widget.asr_worker.listening_started.connect(on_listening_started)
-            
+
             # Start voice input (this will load the model in background)
             print("[ASR Preload] Starting voice input to load model...")
             voice_widget.start_voice_input()
-            
+
         except Exception as e:
             print(f"[ASR Preload] Error preloading ASR: {e}")
             # Retry once more after delay
             QTimer.singleShot(500, self._preload_asr_by_start_stop)
-    
+
     def _stop_voice_input_for_preload(self, voice_widget):
         """Stop voice input after preload."""
         try:
@@ -790,7 +839,9 @@ class MainWindow(QMainWindow):
                 )
                 self.chat_vector_store = ChatVectorStore(embedding_store_path)
             else:
-                self.chat_vector_store = None  # will be initialized once components are ready
+                self.chat_vector_store = (
+                    None  # will be initialized once components are ready
+                )
 
         # Update semantic memory status indicator
         if self.embedding_enabled and hasattr(
@@ -1043,10 +1094,15 @@ class MainWindow(QMainWindow):
                 self._thinking_flush_timer.stop()
                 self._response_started_for_request = False
                 self._stream_active = False
-                if hasattr(self.chat_widget, "typing_indicator") and self.chat_widget.typing_indicator is not None:
+                if (
+                    hasattr(self.chat_widget, "typing_indicator")
+                    and self.chat_widget.typing_indicator is not None
+                ):
                     try:
                         self.chat_widget.typing_indicator.stop()
-                        self.chat_widget.messages_layout.removeWidget(self.chat_widget.typing_indicator)
+                        self.chat_widget.messages_layout.removeWidget(
+                            self.chat_widget.typing_indicator
+                        )
                         self.chat_widget.typing_indicator.deleteLater()
                         self.chat_widget.typing_indicator = None
                     except Exception:
@@ -1098,6 +1154,7 @@ class MainWindow(QMainWindow):
             print("Clearing GPU memory...")
             try:
                 from lokai.utils.clear_gpu_memory import clear_gpu_memory
+
                 clear_gpu_memory()
             except Exception as e:
                 print(f"Error clearing GPU memory: {e}")
@@ -1127,6 +1184,7 @@ class MainWindow(QMainWindow):
                     print(f"Error unloading image generator: {e}")
             try:
                 from lokai.utils.clear_gpu_memory import clear_gpu_memory
+
                 clear_gpu_memory()
             except Exception as e:
                 print(f"Error clearing GPU memory: {e}")
@@ -1176,18 +1234,12 @@ class MainWindow(QMainWindow):
                 break
             remaining = max_total_chars - total_chars
             limit = min(max_chars_per_file, remaining)
-            content, err = read_text_file_with_limits(
-                att["path"], max_chars=limit
-            )
+            content, err = read_text_file_with_limits(att["path"], max_chars=limit)
             if err:
-                augmented_parts.append(
-                    f"(Could not read {att['name']}: {err})"
-                )
+                augmented_parts.append(f"(Could not read {att['name']}: {err})")
                 total_chars += len(augmented_parts[-1])
                 continue
-            block = (
-                f"Attached file: {att['name']} ({format_file_size(att['size'])})\n```\n{content}\n```"
-            )
+            block = f"Attached file: {att['name']} ({format_file_size(att['size'])})\n```\n{content}\n```"
             augmented_parts.append(block)
             total_chars += len(block)
         if truncated_total:
@@ -1247,7 +1299,8 @@ class MainWindow(QMainWindow):
                     "ollama.conversation.use_explicit_history", False
                 ),
                 "system_prompt": self.config_manager.get(
-                    "ollama.conversation.system_prompt", "You are a helpful AI assistant."
+                    "ollama.conversation.system_prompt",
+                    "You are a helpful AI assistant.",
                 ),
                 "max_history": self.config_manager.get(
                     "ollama.conversation.max_history_messages", 20
@@ -1411,61 +1464,60 @@ class MainWindow(QMainWindow):
 
         # Don't create AI bubble yet - wait for first chunk
         # This prevents empty bubble from appearing immediately
-        
+
         # Start AI message and show model status in footer
         self.chat_widget.start_ai_message(model)
 
         # Check if tools are enabled
         tools_enabled = self.config_manager.get("ollama.tools.enabled", False)
-        use_tools = tools_enabled and not images_base64  # Tools don't work well with images
-        
+        use_tools = (
+            tools_enabled and not images_base64
+        )  # Tools don't work well with images
+
         if use_tools:
             # Use ChatToolsWorker with /api/chat endpoint for tools support
             tools = get_available_tools(self.config_manager)
-            
+
             # Convert conversation history to messages format for chat endpoint
             messages = []
-            
+
             # Add system prompt if exists
             if system_prompt:
                 messages.append({"role": "system", "content": system_prompt})
             # Add manual semantic memory (RAG) if available
             if memory_block:
                 messages.append({"role": "system", "content": memory_block})
-            
+
             # Add conversation history
             history_to_include = self.conversation_history
             if max_history > 0:
                 history_to_include = self.conversation_history[-(max_history + 1) : -1]
-            
+
             for msg in history_to_include:
-                messages.append({
-                    "role": msg["role"],
-                    "content": msg["content"]
-                })
-            
+                messages.append({"role": msg["role"], "content": msg["content"]})
+
             # Add current user message (augmented with attachment content for model)
             messages.append({"role": "user", "content": augmented})
-            
+
             # Create ChatToolsWorker
             worker = ChatToolsWorker(
-                self.ollama_client,
-                model,
-                messages,
-                tools,
-                llm_params
+                self.ollama_client, model, messages, tools, llm_params
             )
             # Connect signals - create bubble on first chunk
             worker.chunk_received.connect(self._on_chunk_received)
             worker.thinking_chunk_received.connect(self._on_thinking_chunk_received)
-            worker.finished.connect(lambda content: self._on_tools_response_finished(content))
+            worker.finished.connect(
+                lambda content: self._on_tools_response_finished(content)
+            )
             worker.error_occurred.connect(self._on_response_error)
             # Clear stream chunk buffer for this request
             self._chunk_buffer.clear()
             self._chunk_flush_timer.stop()
+
             def on_tool_executed(name: str, result: str):
                 if name:
                     self.chat_widget.update_tool_status(name)
+
             worker.tool_call_executed.connect(on_tool_executed)
         else:
             # Use regular OllamaWorker with /api/generate endpoint
@@ -1644,8 +1696,12 @@ class MainWindow(QMainWindow):
                     else:
                         # Regular user message
                         user_idx = len(self.conversation_history)
-                        self.conversation_history.append({"role": "user", "content": content})
-                        self.chat_widget.add_user_message(content, message_index=user_idx)
+                        self.conversation_history.append(
+                            {"role": "user", "content": content}
+                        )
+                        self.chat_widget.add_user_message(
+                            content, message_index=user_idx
+                        )
                     # Store in history
                     if image_path:
                         self.conversation_history.append(
@@ -1661,8 +1717,12 @@ class MainWindow(QMainWindow):
                 elif role == "assistant":
                     # AI message
                     assistant_idx = len(self.conversation_history)
-                    self.conversation_history.append({"role": "assistant", "content": content})
-                    self.chat_widget.add_assistant_message(content, message_index=assistant_idx)
+                    self.conversation_history.append(
+                        {"role": "assistant", "content": content}
+                    )
+                    self.chat_widget.add_assistant_message(
+                        content, message_index=assistant_idx
+                    )
 
             # Set model if specified
             if "model" in chat_data and chat_data["model"]:
@@ -1714,7 +1774,7 @@ class MainWindow(QMainWindow):
             # Always reinitialize TTS engine when settings dialog closes
             # This ensures engine, language, voice, and voice cloning settings are all updated
             self._init_tts_engine()
-            
+
             # Reinitialize ASR only if ASR settings actually changed
             asr_after = {
                 "enabled": self.config_manager.get("asr.enabled", False),
@@ -1750,15 +1810,9 @@ class MainWindow(QMainWindow):
 
             # Reconfigure global shortcuts according to new settings
             try:
-                enabled_cfg = self.config_manager.get(
-                    "shortcuts.global.enabled", True
-                )
-                tts_key = self.config_manager.get(
-                    "shortcuts.global.tts", "f9"
-                )
-                image_key = self.config_manager.get(
-                    "shortcuts.global.image", "f10"
-                )
+                enabled_cfg = self.config_manager.get("shortcuts.global.enabled", True)
+                tts_key = self.config_manager.get("shortcuts.global.tts", "f9")
+                image_key = self.config_manager.get("shortcuts.global.image", "f10")
                 if hasattr(self, "global_shortcuts") and self.global_shortcuts:
                     self.global_shortcuts.update_hotkeys(
                         tts_key, image_key, enabled_cfg
@@ -1769,9 +1823,7 @@ class MainWindow(QMainWindow):
                             5000,
                         )
                     else:
-                        self.status_bar.showMessage(
-                            "Global shortcuts disabled", 5000
-                        )
+                        self.status_bar.showMessage("Global shortcuts disabled", 5000)
             except Exception as e:
                 print(f"Error reconfiguring global shortcuts after settings: {e}")
 
@@ -2037,7 +2089,9 @@ class MainWindow(QMainWindow):
         Build a short, user-curated 'memory' block using semantic search over remembered items.
         This is designed for small context windows (keeps strict character limits).
         """
-        if not (self.embedding_enabled and self.embedding_client and self.chat_vector_store):
+        if not (
+            self.embedding_enabled and self.embedding_client and self.chat_vector_store
+        ):
             return ""
 
         stats = self.chat_vector_store.get_stats() if self.chat_vector_store else {}
@@ -2072,9 +2126,7 @@ class MainWindow(QMainWindow):
         if not results:
             return ""
 
-        lines = [
-            "MEMORY (user-curated; use only if relevant; not new chat messages):"
-        ]
+        lines = ["MEMORY (user-curated; use only if relevant; not new chat messages):"]
         used_chars = sum(len(l) for l in lines) + 2
 
         for r in results:
@@ -2296,6 +2348,7 @@ class MainWindow(QMainWindow):
             self._stream_active = False
         except Exception as e:
             import traceback
+
             error_msg = f"Error handling response: {str(e)}"
             print(error_msg)
             traceback.print_exc()
@@ -2319,7 +2372,7 @@ class MainWindow(QMainWindow):
 
             if content:
                 response_text = content.strip()
-                
+
                 # Add to conversation history
                 assistant_index = len(self.conversation_history)
                 self.conversation_history.append(
@@ -2360,15 +2413,16 @@ class MainWindow(QMainWindow):
                 self.chat_widget.start_ai_message(model if model else None)
                 self.chat_widget.append_ai_chunk("No response received from model.")
                 self.chat_widget.finish_ai_message()
-            
+
             # Re-enable send button
             self.chat_widget.set_send_enabled(True)
             self._update_context_usage_status()
             self._response_started_for_request = False
             self._stream_active = False
-            
+
         except Exception as e:
             import traceback
+
             error_msg = f"Error handling tools response: {str(e)}"
             print(error_msg)
             traceback.print_exc()
@@ -2531,7 +2585,7 @@ class MainWindow(QMainWindow):
         elif hasattr(self.tts_engine, "model"):
             # Pocket TTS - only check model, voice_state is loaded lazily in speak_async
             is_ready = self.tts_engine.model is not None
-        
+
         if not is_ready:
             self.status_bar.showMessage("TTS not ready. Please wait...")
             print("TTS not ready")
@@ -2592,11 +2646,15 @@ class MainWindow(QMainWindow):
         """Handle TTS voice selection change."""
         if self.tts_engine:
             engine = self.config_manager.get("tts.engine", "kokoro")
-            
+
             if engine == "pocket_tts" and voice == "Clone Voice":
                 # Use voice cloning
-                voice_cloning_file = self.config_manager.get("tts.voice_cloning.file_path", None)
-                if voice_cloning_file and hasattr(self.tts_engine, "set_voice_cloning_file"):
+                voice_cloning_file = self.config_manager.get(
+                    "tts.voice_cloning.file_path", None
+                )
+                if voice_cloning_file and hasattr(
+                    self.tts_engine, "set_voice_cloning_file"
+                ):
                     self.tts_engine.set_voice_cloning_file(voice_cloning_file)
             else:
                 # Use regular voice
@@ -2605,7 +2663,7 @@ class MainWindow(QMainWindow):
                     self.tts_engine.set_voice_cloning_file(None)
                 if hasattr(self.tts_engine, "set_voice"):
                     self.tts_engine.set_voice(voice)
-            
+
             # Save to config
             self.config_manager.set("tts.voice", voice)
             self.config_manager.save_config()
@@ -2652,9 +2710,15 @@ class MainWindow(QMainWindow):
 
         # Unload other models to free VRAM before loading image model
         print("Unloading other models to free GPU memory...")
+        self.ollama_client.cancel_all_requests()
         self.ollama_client.unload_all_models_silent()
-        if hasattr(self, "audio_generator") and self.audio_generator and self.audio_generator.pipeline is not None:
+        if (
+            hasattr(self, "audio_generator")
+            and self.audio_generator
+            and self.audio_generator.pipeline is not None
+        ):
             self.audio_generator.unload_model()
+        self._clear_gpu_memory()
 
         # Add user message showing the prompt
         user_msg = (
@@ -2751,7 +2815,7 @@ class MainWindow(QMainWindow):
             is_ready = self.tts_engine.pipeline is not None
         elif hasattr(self.tts_engine, "model"):
             is_ready = self.tts_engine.model is not None
-        
+
         if not is_ready:
             self.status_bar.showMessage("TTS not ready. Please wait...")
             return
@@ -2773,9 +2837,15 @@ class MainWindow(QMainWindow):
 
         # Unload other models to free VRAM before loading image model
         print("Unloading other models to free GPU memory...")
+        self.ollama_client.cancel_all_requests()
         self.ollama_client.unload_all_models_silent()
-        if hasattr(self, "audio_generator") and self.audio_generator and self.audio_generator.pipeline is not None:
+        if (
+            hasattr(self, "audio_generator")
+            and self.audio_generator
+            and self.audio_generator.pipeline is not None
+        ):
             self.audio_generator.unload_model()
+        self._clear_gpu_memory()
 
         # Use selected text as prompt
         prompt = text.strip()
@@ -2830,7 +2900,11 @@ class MainWindow(QMainWindow):
             return
 
         # If index is unknown, store with a safe monotonic index
-        safe_index = message_index if isinstance(message_index, int) and message_index >= 0 else len(self.conversation_history)
+        safe_index = (
+            message_index
+            if isinstance(message_index, int) and message_index >= 0
+            else len(self.conversation_history)
+        )
         created_at = datetime.now().isoformat()
         chat_id = self.current_chat_id
         self._embed_message_async(
@@ -2857,7 +2931,11 @@ class MainWindow(QMainWindow):
             )
             return
 
-        safe_index = message_index if isinstance(message_index, int) and message_index >= 0 else len(self.conversation_history)
+        safe_index = (
+            message_index
+            if isinstance(message_index, int) and message_index >= 0
+            else len(self.conversation_history)
+        )
         created_at = datetime.now().isoformat()
         chat_id = self.current_chat_id
         self._embed_message_async(
@@ -2887,9 +2965,15 @@ class MainWindow(QMainWindow):
 
         # Unload other models to free VRAM before loading audio model
         print("Unloading other models to free GPU memory...")
+        self.ollama_client.cancel_all_requests()
         self.ollama_client.unload_all_models_silent()
-        if hasattr(self, "image_generator") and self.image_generator and self.image_generator.pipeline is not None:
+        if (
+            hasattr(self, "image_generator")
+            and self.image_generator
+            and self.image_generator.pipeline is not None
+        ):
             self.image_generator.unload_model()
+        self._clear_gpu_memory()
 
         # Add user message showing the prompt
         self.chat_widget.add_user_message(f"Generate audio: {prompt}")
@@ -2931,9 +3015,15 @@ class MainWindow(QMainWindow):
 
         # Unload other models to free VRAM before loading audio model
         print("Unloading other models to free GPU memory...")
+        self.ollama_client.cancel_all_requests()
         self.ollama_client.unload_all_models_silent()
-        if hasattr(self, "image_generator") and self.image_generator and self.image_generator.pipeline is not None:
+        if (
+            hasattr(self, "image_generator")
+            and self.image_generator
+            and self.image_generator.pipeline is not None
+        ):
             self.image_generator.unload_model()
+        self._clear_gpu_memory()
 
         # Use selected text as prompt
         prompt = text.strip()
@@ -2997,6 +3087,7 @@ class MainWindow(QMainWindow):
 
         # Auto-unload other models to free GPU memory
         print("Auto-unloading models to free GPU memory...")
+        self.ollama_client.cancel_all_requests()
         self.ollama_client.unload_all_models_silent()
         if self.image_generator:
             self.image_generator.clear_gpu_memory()
@@ -3005,6 +3096,8 @@ class MainWindow(QMainWindow):
         if self.image_generator and self.image_generator.pipeline is not None:
             print("Unloading image generator pipeline completely...")
             self.image_generator.unload_model()
+
+        self._clear_gpu_memory()
 
         # Aggressive GPU memory cleanup before video generation
         try:
@@ -3341,7 +3434,9 @@ class OllamaWorker(QThread):
     finished = Signal(object)  # new_context
     error_occurred = Signal(str)
 
-    def __init__(self, client, model, prompt, context, llm_params=None, images=None, tools=None):
+    def __init__(
+        self, client, model, prompt, context, llm_params=None, images=None, tools=None
+    ):
         super().__init__()
         self.client = client
         self.model = model
@@ -3351,6 +3446,7 @@ class OllamaWorker(QThread):
         self.images = images  # List of base64-encoded images for vision models
         self.tools = tools  # Optional list of tools for function calling
         import uuid
+
         self.request_id = str(uuid.uuid4())  # Unique request ID for cancellation
 
     def run(self):
@@ -3361,7 +3457,9 @@ class OllamaWorker(QThread):
             def on_chunk(chunk: str):
                 nonlocal chunks_received
                 try:
-                    if chunk:  # Emit all chunks including whitespace (newlines for formatting)
+                    if (
+                        chunk
+                    ):  # Emit all chunks including whitespace (newlines for formatting)
                         chunks_received = True
                         self.chunk_received.emit(chunk)
                 except Exception as e:
@@ -3418,13 +3516,13 @@ class OllamaWorker(QThread):
 
 class ChatToolsWorker(QThread):
     """Worker thread for Ollama chat with tools/function calling support."""
-    
+
     chunk_received = Signal(str)
     thinking_chunk_received = Signal(str)
     finished = Signal(str)  # final response
     error_occurred = Signal(str)
     tool_call_executed = Signal(str, str)  # tool_name, result
-    
+
     def __init__(self, client, model, messages, tools, llm_params=None):
         super().__init__()
         self.client = client
@@ -3432,19 +3530,20 @@ class ChatToolsWorker(QThread):
         self.messages = messages  # List of messages in chat format
         self.tools = tools
         self.llm_params = llm_params or {}
-        self.max_iterations = 50 # Max tool call iterations to avoid loops
+        self.max_iterations = 50  # Max tool call iterations to avoid loops
         import uuid
+
         self.request_id = str(uuid.uuid4())  # Unique request ID for cancellation
-        
+
     def run(self):
         """Run in background thread - handle tool calls automatically."""
         try:
             current_messages = self.messages.copy()
             iteration = 0
-            
+
             while iteration < self.max_iterations:
                 iteration += 1
-                
+
                 # Callback for streaming
                 def on_chunk(chunk: str):
                     if chunk:
@@ -3453,7 +3552,7 @@ class ChatToolsWorker(QThread):
                 def on_thinking_chunk(chunk: str):
                     if chunk:
                         self.thinking_chunk_received.emit(chunk)
-                
+
                 # Call chat_with_tools with streaming
                 result = self.client.chat_with_tools(
                     model=self.model,
@@ -3471,59 +3570,67 @@ class ChatToolsWorker(QThread):
                     thinking_callback=on_thinking_chunk,
                     request_id=self.request_id,
                 )
-                
+
                 if "error" in result:
                     self.error_occurred.emit(result["error"])
                     return
-                
+
                 message = result.get("message", {})
                 content = message.get("content", "")
                 tool_calls = message.get("tool_calls", [])
-                
+
                 # Add assistant message to conversation
                 current_messages.append(message)
-                
+
                 # If there are tool calls, execute them
                 if tool_calls:
                     print(f"[TOOLS] Model je pozvao {len(tool_calls)} tool(s)")
-                    
+
                     tool_results = []
                     for tool_call in tool_calls:
                         func_name = tool_call["function"]["name"]
                         func_args = tool_call["function"]["arguments"]
                         tool_id = tool_call["id"]
-                        
-                        print(f"[TOOLS] Izvršavam {func_name} sa argumentima: {func_args}")
-                        
+
+                        print(
+                            f"[TOOLS] Izvršavam {func_name} sa argumentima: {func_args}"
+                        )
+
                         # Emit tool call signal BEFORE execution to show status
                         self.tool_call_executed.emit(func_name, "")
-                        
+
                         # Execute tool
                         try:
                             tool_result = execute_tool(func_name, func_args)
                             self.tool_call_executed.emit(func_name, tool_result)
-                            
+
                             # Add tool result to messages
-                            tool_results.append({
-                                "role": "tool",
-                                "content": tool_result,
-                                "tool_call_id": tool_id,
-                                "name": func_name
-                            })
+                            tool_results.append(
+                                {
+                                    "role": "tool",
+                                    "content": tool_result,
+                                    "tool_call_id": tool_id,
+                                    "name": func_name,
+                                }
+                            )
                         except Exception as e:
-                            error_result = f"Greška pri izvršavanju tool-a {func_name}: {str(e)}"
+                            error_result = (
+                                f"Greška pri izvršavanju tool-a {func_name}: {str(e)}"
+                            )
                             print(f"[TOOLS] {error_result}")
-                            tool_results.append({
-                                "role": "tool",
-                                "content": error_result,
-                                "tool_call_id": tool_id,
-                                "name": func_name
-                            })
-                    
+                            tool_results.append(
+                                {
+                                    "role": "tool",
+                                    "content": error_result,
+                                    "tool_call_id": tool_id,
+                                    "name": func_name,
+                                }
+                            )
+
                     # Add tool results to messages and continue loop
                     current_messages.extend(tool_results)
                     continue  # Loop again to get final response
-                
+
                 # No tool calls - finish
                 if content:
                     self.finished.emit(content)
@@ -3532,12 +3639,15 @@ class ChatToolsWorker(QThread):
                     # Empty content but no tool calls - might be thinking
                     self.finished.emit(content or "")
                     return
-            
+
             # Max iterations reached
-            self.error_occurred.emit("Dostignut maksimalan broj tool poziva. Možda je infinite loop.")
-            
+            self.error_occurred.emit(
+                "Dostignut maksimalan broj tool poziva. Možda je infinite loop."
+            )
+
         except Exception as e:
             import traceback
+
             error_msg = f"{str(e)}"
             print(f"ChatToolsWorker error: {error_msg}")
             traceback.print_exc()
