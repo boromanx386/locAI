@@ -119,6 +119,10 @@ class MainWindow(QMainWindow):
         # Flag to track if we've cleared auto-loaded models on first message
         self._startup_models_cleared = False
 
+        # Deferred send state (for non-blocking memory block)
+        self._pending_send = None
+        self._memory_block_worker = None
+
         # Track last status check to avoid redundant checks
         self._last_status_check = None
         self._status_check_interval = 30000  # Only check if 30+ seconds passed
@@ -224,26 +228,25 @@ class MainWindow(QMainWindow):
             print(f"[Startup] Error clearing Ollama models: {e}")
 
     def _clear_gpu_memory(self):
-        """Clear GPU memory aggressively."""
+        """Clear GPU memory for diffusers/image/video models."""
         try:
-            import torch
             import gc
+
+            import torch
 
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
-                # Multiple passes to ensure all memory is freed
-                for _ in range(5):
-                    torch.cuda.empty_cache()
+                torch.cuda.empty_cache()
                 try:
                     torch.cuda.ipc_collect()
                 except AttributeError:
                     pass
                 try:
                     torch.cuda.reset_peak_memory_stats()
-                except:
+                except Exception:
                     pass
-                gc.collect()
-                print("[Startup] GPU memory cleared")
+            gc.collect()
+            print("[Startup] GPU memory cleared")
         except ImportError:
             pass  # PyTorch not available
         except Exception as e:
@@ -1132,11 +1135,10 @@ class MainWindow(QMainWindow):
 
     def on_message_sent(self, message: str, image_path: str = ""):
         """Handle message sent from chat widget."""
-        # Clear any auto-loaded models if not already done (backup in case user sends message quickly)
+        # Defer startup clear to next tick (main thread - PyTorch/CUDA need it)
         if not self._startup_models_cleared:
             self._startup_models_cleared = True
-            print("[First Message] Clearing any auto-loaded Ollama models...")
-            self._clear_ollama_models_at_startup()
+            QTimer.singleShot(0, self._clear_ollama_models_at_startup)
 
         # Get selected model
         model = self.status_panel.get_selected_model()
@@ -1199,11 +1201,6 @@ class MainWindow(QMainWindow):
             else (f"📎 {len(attachments)} file(s) attached" if attachments else "")
         )
 
-        # Auto-unload image model before LLM generation to free GPU memory
-        if self.image_generator and self.image_generator.pipeline is not None:
-            print("Auto-unloading image model to free GPU memory...")
-            self.image_generator.unload_model()
-
         # Process image if provided
         images_base64 = []
         is_vision_request = False
@@ -1227,30 +1224,6 @@ class MainWindow(QMainWindow):
                 )
                 return
 
-        # GPU memory management: unload previous model if switching between vision and non-vision
-        # or if switching to different model
-        if self.last_used_model and self.last_used_model != model:
-            print(
-                f"Model changed from {self.last_used_model} to {model} - unloading previous model..."
-            )
-            self.ollama_client.unload_model(self.last_used_model)
-            # Clear context when switching models
-            self.current_context = None
-        elif (
-            self.last_used_model == model and self.last_was_vision != is_vision_request
-        ):
-            # Same model but switching between vision and non-vision - unload to free GPU
-            print(
-                f"Switching between vision/non-vision mode - unloading model {model}..."
-            )
-            self.ollama_client.unload_model(model)
-            # Clear context when switching modes
-            self.current_context = None
-
-        # Update tracking
-        self.last_used_model = model
-        self.last_was_vision = is_vision_request
-
         # Add to conversation history (store original message) before creating bubble
         # so the bubble can carry the correct message index for manual memory actions.
         user_message_index = len(self.conversation_history)
@@ -1263,13 +1236,8 @@ class MainWindow(QMainWindow):
             message_index=user_message_index,
         )
 
-        # Manual-only semantic memory: never auto-embed user messages.
-
         # Use cached config values (much faster than reading from file each time)
         if self._llm_params_cache is None or self._conversation_settings_cache is None:
-            model = self.status_panel.get_selected_model() or self.config_manager.get(
-                "ollama.default_model", "llama3.2"
-            )
             self._cache_config_values(model)
         llm_params = self._llm_params_cache.copy()
         conv_settings = self._conversation_settings_cache
@@ -1286,18 +1254,12 @@ class MainWindow(QMainWindow):
                 ),
             }
 
-        # Build prompt based on conversation settings
+        # Build prompt settings
         use_explicit_history = conv_settings["use_explicit_history"]
         system_prompt = conv_settings["system_prompt"]
         max_history = conv_settings["max_history"]
-
-        # If context is None but we have conversation history, use explicit history
-        # (context cannot be reconstructed from text, so we must use explicit history)
         if self.current_context is None and len(self.conversation_history) > 0:
             use_explicit_history = True
-
-        # If sending image, don't use context (vision models work better without context)
-        # Send None for context when images are present (like in old code)
         context_to_use = (
             None if (images_base64 and len(images_base64) > 0) else self.current_context
         )
@@ -1305,20 +1267,84 @@ class MainWindow(QMainWindow):
             print("Image detected - using None context for vision model")
             use_explicit_history = True
 
-        # Manual memory block (RAG) - user curated, small-context friendly
-        memory_block = ""
-        if (
+        # Store state and defer heavy work (memory block) so UI can paint first
+        self._pending_send = {
+            "message": message,
+            "augmented": augmented,
+            "model": model,
+            "images_base64": images_base64,
+            "is_vision_request": is_vision_request,
+            "llm_params": llm_params,
+            "use_explicit_history": use_explicit_history,
+            "system_prompt": system_prompt,
+            "max_history": max_history,
+            "context_to_use": context_to_use,
+        }
+
+        # Disable send to prevent double-send while we build prompt / wait for memory
+        self.chat_widget.set_send_enabled(False)
+
+        needs_memory = (
             self.embedding_enabled
             and self.embedding_client
             and self.chat_vector_store
             and not images_base64
             and not self.rag_auto_embed
+        )
+        if needs_memory:
+            self._memory_block_worker = MemoryBlockWorker(self, message)
+            self._memory_block_worker.memory_ready.connect(self._on_memory_block_ready)
+            self._memory_block_worker.start()
+        else:
+            QTimer.singleShot(0, lambda: self._finish_send(""))
+
+    def _on_memory_block_ready(self, memory_block: str):
+        """Called when MemoryBlockWorker has the RAG memory block."""
+        try:
+            if hasattr(self, "_memory_block_worker") and self._memory_block_worker:
+                self._memory_block_worker.memory_ready.disconnect()
+                self._memory_block_worker = None
+        except Exception:
+            pass
+        self._finish_send(memory_block or "")
+
+    def _finish_send(self, memory_block: str):
+        """Complete send: unload old models, build prompt, start LLM worker."""
+        state = getattr(self, "_pending_send", None)
+        if not state:
+            return
+        self._pending_send = None
+
+        augmented = state["augmented"]
+        model = state["model"]
+        images_base64 = state["images_base64"]
+        is_vision_request = state.get("is_vision_request", bool(images_base64))
+        llm_params = state["llm_params"]
+        use_explicit_history = state["use_explicit_history"]
+        system_prompt = state["system_prompt"]
+        max_history = state["max_history"]
+        context_to_use = state["context_to_use"]
+
+        # Unload image model and/or previous Ollama model (main thread - PyTorch needs it for proper VRAM release)
+        if self.image_generator and self.image_generator.pipeline is not None:
+            print("Auto-unloading image model to free GPU memory...")
+            self.image_generator.unload_model()
+        if self.last_used_model and self.last_used_model != model:
+            print(
+                f"Model changed from {self.last_used_model} to {model} - unloading previous model..."
+            )
+            self.ollama_client.unload_model(self.last_used_model)
+            self.current_context = None
+        elif (
+            self.last_used_model == model and self.last_was_vision != is_vision_request
         ):
-            try:
-                memory_block = self._build_manual_memory_block(message)
-            except Exception as e:
-                print(f"Error building manual memory block: {e}")
-                memory_block = ""
+            print(
+                f"Switching between vision/non-vision mode - unloading model {model}..."
+            )
+            self.ollama_client.unload_model(model)
+            self.current_context = None
+        self.last_used_model = model
+        self.last_was_vision = is_vision_request
 
         # Auto semantic memory (legacy behavior) - only when auto-embedding is enabled
         if (
@@ -1353,7 +1379,7 @@ class MainWindow(QMainWindow):
 
             # Estimate size to avoid multiple string concatenations
             estimated_size = len(system_prompt) if system_prompt else 0
-            estimated_size += len(message) + 50  # Current message + overhead
+            estimated_size += len(augmented) + 50  # Current message + overhead
             for msg in history_to_include:
                 estimated_size += (
                     len(msg.get("content", "")) + 30
@@ -1382,69 +1408,6 @@ class MainWindow(QMainWindow):
             final_prompt = augmented
             if memory_block:
                 final_prompt = memory_block + "\n\n" + final_prompt
-
-        # Check if prompt preview is enabled
-        show_preview = self.config_manager.get("rag.show_prompt_preview", False)
-        if show_preview:
-            # Build preview prompt/messages for display
-            preview_prompt = ""
-            preview_type = "Normal"
-            manual_memory_used = bool(memory_block)
-            if manual_memory_used:
-                preview_type = "Manual Memory"
-            
-            # Check if tools are enabled (to determine preview format)
-            tools_enabled_check = self.config_manager.get("ollama.tools.enabled", False)
-            use_tools_check = tools_enabled_check and not images_base64
-            
-            if use_tools_check:
-                # Tools mode: format messages list as readable string
-                preview_messages = []
-                if system_prompt:
-                    preview_messages.append({"role": "system", "content": system_prompt})
-                if memory_block:
-                    preview_messages.append({"role": "system", "content": memory_block})
-                
-                history_to_include = self.conversation_history
-                if max_history > 0:
-                    history_to_include = self.conversation_history[-(max_history + 1) : -1]
-                
-                for msg in history_to_include:
-                    preview_messages.append({
-                        "role": msg["role"],
-                        "content": msg["content"]
-                    })
-                
-                preview_messages.append({"role": "user", "content": augmented})
-                
-                # Format messages as readable string
-                preview_lines = []
-                for msg in preview_messages:
-                    role = msg["role"].upper()
-                    content = msg["content"]
-                    preview_lines.append(f"[{role}]\n{content}")
-                preview_prompt = "\n\n---\n\n".join(preview_lines)
-            else:
-                # Non-tools mode: use final_prompt
-                preview_prompt = final_prompt
-            
-            # Show preview dialog
-            dialog = DebugDialog(self, preview_mode=True)
-            dialog.set_prompt_info(
-                prompt=preview_prompt,
-                prompt_type=preview_type,
-                message_count=len(self.conversation_history),
-                included_count=min(len(self.conversation_history), max_history + 1) if max_history > 0 else len(self.conversation_history),
-                semantic_memory_enabled=manual_memory_used,
-                context_used=not use_explicit_history,
-                context_info=f"Context size: ~{len(self.current_context) if self.current_context else 0} tokens" if self.current_context else "No context yet",
-            )
-            
-            # If user cancels, don't send message
-            if not dialog.exec() or not dialog.user_accepted:
-                # User cancelled - remove the user message bubble we already added
-                # (Actually, we haven't added it yet, so just return)
-                return
 
         # Don't create AI bubble yet - wait for first chunk
         # This prevents empty bubble from appearing immediately
@@ -1723,6 +1686,15 @@ class MainWindow(QMainWindow):
 
     def show_settings(self):
         """Show settings dialog."""
+        # Capture ASR config before dialog (to avoid unnecessary model reload if unchanged)
+        asr_before = {
+            "enabled": self.config_manager.get("asr.enabled", False),
+            "device": self.config_manager.get("asr.device", "cpu"),
+            "model": self.config_manager.get("asr.model", ""),
+            "chunk_size_ms": self.config_manager.get("asr.chunk_size_ms", 560),
+            "storage_path": self.config_manager.get("asr.storage_path") or "",
+        }
+
         dialog = SettingsDialog(self.config_manager, self)
         if dialog.exec():
             # Reload theme if changed
@@ -1743,8 +1715,22 @@ class MainWindow(QMainWindow):
             # This ensures engine, language, voice, and voice cloning settings are all updated
             self._init_tts_engine()
             
-            # Reinitialize ASR engine if settings changed
-            self._init_asr_engine()
+            # Reinitialize ASR only if ASR settings actually changed
+            asr_after = {
+                "enabled": self.config_manager.get("asr.enabled", False),
+                "device": self.config_manager.get("asr.device", "cpu"),
+                "model": self.config_manager.get("asr.model", ""),
+                "chunk_size_ms": self.config_manager.get("asr.chunk_size_ms", 560),
+                "storage_path": self.config_manager.get("asr.storage_path") or "",
+            }
+            if asr_before != asr_after:
+                self._init_asr_engine()
+                if (
+                    hasattr(self.chat_widget, "voice_input_widget")
+                    and self.chat_widget.voice_input_widget is not None
+                    and hasattr(self.chat_widget.voice_input_widget, "reinit_asr")
+                ):
+                    self.chat_widget.voice_input_widget.reinit_asr()
 
             # Status panel voices are already updated in _init_tts_engine()
             # Voice is already set in _init_tts_engine(), no need to update again here
@@ -2237,35 +2223,24 @@ class MainWindow(QMainWindow):
                 self.chat_widget.current_ai_bubble.flush_display()
             self.current_context = new_context
 
-            # Unload model after response to free GPU memory for next request
-            # This prevents GPU memory buildup and ensures fast subsequent requests
-            if self.last_used_model:
-                print(
-                    f"Model {self.last_used_model} finished - unloading to free GPU memory..."
-                )
-                self.ollama_client.unload_model(self.last_used_model)
+            # Defer unload + GPU clear so UI updates immediately (no stutter)
+            model_to_unload = self.last_used_model
+            was_vision = self.last_was_vision
+            if model_to_unload:
 
-                # Aggressive GPU memory cleanup after unload
-                try:
-                    import torch
-                    import gc
+                def _do_post_response_cleanup():
+                    try:
+                        print(
+                            f"Model {model_to_unload} finished - unloading to free GPU memory..."
+                        )
+                        self.ollama_client.unload_model(model_to_unload)
+                        self._clear_gpu_memory()
+                        if was_vision:
+                            self.current_context = None
+                    except Exception as e:
+                        print(f"Error in post-response cleanup: {e}")
 
-                    if torch.cuda.is_available():
-                        torch.cuda.synchronize()
-                        for _ in range(5):
-                            torch.cuda.empty_cache()
-                        try:
-                            torch.cuda.ipc_collect()
-                        except AttributeError:
-                            pass
-                        gc.collect()
-                        print("GPU memory cleared after model unload")
-                except:
-                    pass
-
-                # Clear context after vision model (helps with next request)
-                if self.last_was_vision:
-                    self.current_context = None
+                QTimer.singleShot(0, _do_post_response_cleanup)
 
             # Only finish if bubble exists
             if self.chat_widget.current_ai_bubble is not None:
@@ -2675,9 +2650,11 @@ class MainWindow(QMainWindow):
             )
             return
 
-        # Auto-unload Ollama models before image generation to free GPU memory
-        print("Auto-unloading Ollama models to free GPU memory...")
+        # Unload other models to free VRAM before loading image model
+        print("Unloading other models to free GPU memory...")
         self.ollama_client.unload_all_models_silent()
+        if hasattr(self, "audio_generator") and self.audio_generator and self.audio_generator.pipeline is not None:
+            self.audio_generator.unload_model()
 
         # Add user message showing the prompt
         user_msg = (
@@ -2794,9 +2771,11 @@ class MainWindow(QMainWindow):
             )
             return
 
-        # Auto-unload Ollama models before image generation
-        print("Auto-unloading Ollama models to free GPU memory...")
+        # Unload other models to free VRAM before loading image model
+        print("Unloading other models to free GPU memory...")
         self.ollama_client.unload_all_models_silent()
+        if hasattr(self, "audio_generator") and self.audio_generator and self.audio_generator.pipeline is not None:
+            self.audio_generator.unload_model()
 
         # Use selected text as prompt
         prompt = text.strip()
@@ -2906,9 +2885,11 @@ class MainWindow(QMainWindow):
             )
             return
 
-        # Auto-unload Ollama models before audio generation to free GPU memory
-        print("Auto-unloading Ollama models to free GPU memory...")
+        # Unload other models to free VRAM before loading audio model
+        print("Unloading other models to free GPU memory...")
         self.ollama_client.unload_all_models_silent()
+        if hasattr(self, "image_generator") and self.image_generator and self.image_generator.pipeline is not None:
+            self.image_generator.unload_model()
 
         # Add user message showing the prompt
         self.chat_widget.add_user_message(f"Generate audio: {prompt}")
@@ -2948,9 +2929,11 @@ class MainWindow(QMainWindow):
             )
             return
 
-        # Auto-unload Ollama models before audio generation
-        print("Auto-unloading Ollama models to free GPU memory...")
+        # Unload other models to free VRAM before loading audio model
+        print("Unloading other models to free GPU memory...")
         self.ollama_client.unload_all_models_silent()
+        if hasattr(self, "image_generator") and self.image_generator and self.image_generator.pipeline is not None:
+            self.image_generator.unload_model()
 
         # Use selected text as prompt
         prompt = text.strip()
@@ -3294,6 +3277,33 @@ class MainWindow(QMainWindow):
                 print(f"Error saving embeddings on close: {e}")
 
         event.accept()
+
+
+class MemoryBlockWorker(QThread):
+    """Worker thread for RAG memory block - avoids blocking UI on embedding HTTP call."""
+
+    memory_ready = Signal(str)
+
+    def __init__(self, main_window, query_text: str):
+        super().__init__()
+        self.main_window = main_window
+        self.query_text = query_text
+        self.setTerminationEnabled(True)
+
+    def run(self):
+        memory_block = ""
+        try:
+            if (
+                self.main_window.embedding_enabled
+                and self.main_window.embedding_client
+                and self.main_window.chat_vector_store
+            ):
+                memory_block = self.main_window._build_manual_memory_block(
+                    self.query_text
+                )
+        except Exception as e:
+            print(f"Error building manual memory block in worker: {e}")
+        self.memory_ready.emit(memory_block or "")
 
 
 class EmbeddingWorker(QThread):

@@ -30,7 +30,7 @@ locAI is a desktop AI assistant that combines Large Language Models (LLM), Image
 ## Requirements
 
 ### Essential
-- **Python 3.12** (developed and tested on 3.12;
+- **Python 3.12** (developed and tested on 3.12;)
 - **Ollama** – install from [ollama.com](https://ollama.com/download) and ensure it’s in your PATH
 - Dependencies from one of `lokai/requirements*.txt` (see below)
 

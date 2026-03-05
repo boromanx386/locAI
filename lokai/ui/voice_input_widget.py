@@ -261,6 +261,40 @@ class VoiceInputWidget(QWidget):
             self.status_label.setText("ASR initialization failed")
             self.voice_btn.setEnabled(False)
 
+    def reinit_asr(self):
+        """
+        Re-initialize ASR with current config (e.g. after device change in Settings).
+        Call this when Settings are saved so device/other ASR changes take effect immediately.
+        """
+        try:
+            # Stop listening if active
+            if self.is_listening and self.asr_worker:
+                self.asr_worker.stop_listening()
+                self.is_listening = False
+                self.update_button_style()
+                self.audio_indicator.set_listening(False)
+
+            # Cleanup old worker and engine
+            if self.asr_worker:
+                self.asr_worker.cleanup()
+                self.asr_worker = None
+            if self.asr_engine:
+                try:
+                    self.asr_engine.unload_model()
+                except Exception:
+                    pass
+                self.asr_engine = None
+
+            # Reload config from disk to get latest settings (e.g. asr.device)
+            self.config_manager.reload_config()
+
+            # Re-initialize (reuses init_asr logic)
+            self.init_asr()
+        except Exception as e:
+            print(f"Error reinitializing ASR: {e}")
+            self.status_label.setText("ASR reinit failed")
+            self.voice_btn.setEnabled(False)
+
     def update_button_style(self):
         """Update voice button style based on state."""
         if self.is_listening:

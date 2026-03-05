@@ -36,8 +36,9 @@ class ConfigManager:
         self.config_file = self.config_dir / "config.json"
 
         # Default config path (in package)
-        package_dir = Path(__file__).parent.parent
-        self.default_config_file = package_dir / "config" / "default_config.json"
+        from lokai.core.paths import get_package_root
+
+        self.default_config_file = get_package_root() / "config" / "default_config.json"
 
         # Load configuration
         self.config = self._load_config()

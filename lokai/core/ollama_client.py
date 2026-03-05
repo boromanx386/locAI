@@ -565,14 +565,12 @@ class OllamaClient:
                 timeout=10,
             )
             
-            # Aggressive GPU memory cleanup after stop
             try:
                 import torch
                 import gc
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
-                    for _ in range(5):
-                        torch.cuda.empty_cache()
+                    torch.cuda.empty_cache()
                     try:
                         torch.cuda.ipc_collect()
                     except AttributeError:
@@ -584,7 +582,7 @@ class OllamaClient:
                     gc.collect()
             except:
                 pass
-            
+
             if result.returncode == 0:
                 print(f"Model {model_name} stopped successfully")
                 return True
@@ -615,14 +613,12 @@ class OllamaClient:
                 timeout=10,
             )
             
-            # Aggressive GPU memory cleanup after unload
             try:
                 import torch
                 import gc
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
-                    for _ in range(5):
-                        torch.cuda.empty_cache()
+                    torch.cuda.empty_cache()
                     try:
                         torch.cuda.ipc_collect()
                     except AttributeError:
@@ -634,7 +630,7 @@ class OllamaClient:
                     gc.collect()
             except:
                 pass
-            
+
             if result.returncode == 0:
                 print(f"Model {model_name} unloaded successfully")
                 return True
@@ -648,89 +644,29 @@ class OllamaClient:
     def unload_all_models_silent(self) -> None:
         """
         Silently unload all loaded Ollama models to free GPU memory.
-        First gets list of actually loaded models, then unloads them.
+        Gets list of actually loaded models from 'ollama list', then stops each one.
         """
         try:
             import subprocess
 
-            # First, get list of actually loaded models
-            try:
-                result = subprocess.run(
-                    ["ollama", "list"], capture_output=True, text=True, timeout=10
-                )
+            result = subprocess.run(
+                ["ollama", "list"], capture_output=True, text=True, timeout=10
+            )
 
-                if result.returncode == 0:
-                    # Parse output to get model names
-                    lines = result.stdout.strip().split("\n")
-                    loaded_models = []
-                    for line in lines[1:]:  # Skip header
-                        if line.strip():
-                            parts = line.split()
-                            if len(parts) > 0:
-                                model_name = parts[0]
-                                # Extract base model name (before ':')
-                                if ":" in model_name:
-                                    model_name = model_name.split(":")[0]
-                                if model_name not in loaded_models:
-                                    loaded_models.append(model_name)
+            if result.returncode == 0:
+                lines = result.stdout.strip().split("\n")
+                loaded_models = []
+                for line in lines[1:]:  # Skip header
+                    if line.strip():
+                        parts = line.split()
+                        if len(parts) > 0:
+                            model_name = parts[0]
+                            if ":" in model_name:
+                                model_name = model_name.split(":")[0]
+                            if model_name not in loaded_models:
+                                loaded_models.append(model_name)
 
-                    # Unload all loaded models
-                    for model in loaded_models:
-                        try:
-                            subprocess.run(
-                                ["ollama", "stop", model],
-                                capture_output=True,
-                                text=True,
-                                timeout=5,
-                            )
-                        except:
-                            pass  # Silent fail
-
-                    if loaded_models:
-                        print(
-                            f"Unloaded {len(loaded_models)} Ollama model(s): {', '.join(loaded_models)}"
-                        )
-                    else:
-                        print("No Ollama models were loaded")
-                else:
-                    # Fallback: try common model names
-                    models_to_unload = [
-                        "llava",
-                        "mixtral",
-                        "llama",
-                        "codellama",
-                        "mistral",
-                        "qwen",
-                        "phi",
-                        "gemma",
-                        "neural-chat",
-                    ]
-                    for model in models_to_unload:
-                        try:
-                            subprocess.run(
-                                ["ollama", "stop", model],
-                                capture_output=True,
-                                text=True,
-                                timeout=5,
-                            )
-                        except:
-                            pass  # Silent fail
-                    print("Ollama models unloaded (fallback method)")
-            except Exception as e:
-                print(f"Error getting model list: {e}")
-                # Fallback: try common model names
-                models_to_unload = [
-                    "llava",
-                    "mixtral",
-                    "llama",
-                    "codellama",
-                    "mistral",
-                    "qwen",
-                    "phi",
-                    "gemma",
-                    "neural-chat",
-                ]
-                for model in models_to_unload:
+                for model in loaded_models:
                     try:
                         subprocess.run(
                             ["ollama", "stop", model],
@@ -739,23 +675,29 @@ class OllamaClient:
                             timeout=5,
                         )
                     except:
-                        pass  # Silent fail
-                print("Ollama models unloaded (fallback method)")
+                        pass
 
-            # Clear CUDA cache after unloading (aggressive cleanup)
+                if loaded_models:
+                    print(
+                        f"Unloaded {len(loaded_models)} Ollama model(s): {', '.join(loaded_models)}"
+                    )
+                else:
+                    print("No Ollama models were loaded")
+            else:
+                print("Could not get Ollama model list; skipping unload")
+
             try:
                 import torch
                 import gc
 
                 if torch.cuda.is_available():
-                    torch.cuda.synchronize()  # Wait for all operations to complete
-                    torch.cuda.empty_cache()  # Clear cache
-                    torch.cuda.empty_cache()  # Second pass
+                    torch.cuda.synchronize()
+                    torch.cuda.empty_cache()
                     try:
-                        torch.cuda.ipc_collect()  # Collect IPC resources
+                        torch.cuda.ipc_collect()
                     except AttributeError:
                         pass
-                    gc.collect()  # Force garbage collection
+                    gc.collect()
             except:
                 pass
 

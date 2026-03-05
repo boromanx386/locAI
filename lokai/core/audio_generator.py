@@ -80,6 +80,10 @@ class AudioGenerator:
         if self.current_model == model_name and self.pipeline is not None:
             return  # Already loaded
 
+        # Unload previous model first to free VRAM when switching
+        if self.pipeline is not None:
+            self.unload_model()
+
         print(f"Loading audio model: {model_name}")
 
         # Ensure environment is set up before loading (in case it was reset)

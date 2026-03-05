@@ -87,6 +87,10 @@ class ImageGenerator:
                     pass
             return  # Already loaded
 
+        # Unload previous model first to free VRAM when switching
+        if self.pipeline is not None:
+            self.unload_model()
+
         print(f"Loading model: {model_name}")
 
         try:
@@ -436,52 +440,30 @@ class ImageGenerator:
             # Clear LoRAs when model is unloaded
             self.active_loras = []
 
-            # Force garbage collection (multiple times)
             import gc
 
-            for _ in range(5):
-                gc.collect()
+            gc.collect()
 
-            # Clear CUDA cache if available (aggressive cleanup)
+            # Clear CUDA cache if available
             if torch.cuda.is_available():
                 try:
                     device = torch.cuda.current_device()
-                    torch.cuda.synchronize(
-                        device
-                    )  # Wait for all operations to complete
+                    torch.cuda.synchronize(device)
+                    torch.cuda.empty_cache()
 
-                    # Multiple cache clears (increased from 5 to 10 for better cleanup)
-                    for _ in range(10):
-                        torch.cuda.empty_cache()
-
-                    # Reset peak memory stats
                     try:
                         torch.cuda.reset_peak_memory_stats(device)
                     except:
                         pass
 
-                    # Collect IPC resources
                     try:
-                        torch.cuda.ipc_collect()  # Collect IPC resources if available
+                        torch.cuda.ipc_collect()
                     except AttributeError:
                         pass
 
-                    # Additional cleanup passes
-                    for _ in range(3):
-                        gc.collect()
-                        torch.cuda.empty_cache()
-
-                    # Final garbage collection
                     gc.collect()
                 except Exception as e:
                     print(f"Error in GPU cleanup: {e}")
-                    # Fallback - more aggressive
-                    try:
-                        for _ in range(5):
-                            torch.cuda.empty_cache()
-                            gc.collect()
-                    except:
-                        pass
 
             print("Model unloaded and GPU memory freed")
 
@@ -531,40 +513,22 @@ class ImageGenerator:
                 try:
                     device = torch.cuda.current_device()
                     torch.cuda.synchronize(device)
+                    torch.cuda.empty_cache()
 
-                    # Multiple cache clears
-                    for _ in range(10):
-                        torch.cuda.empty_cache()
-
-                    # Reset peak memory stats
                     try:
                         torch.cuda.reset_peak_memory_stats(device)
                     except:
                         pass
 
-                    # Collect IPC resources
                     try:
                         torch.cuda.ipc_collect()
                     except AttributeError:
                         pass
 
-                    # Additional cleanup passes
-                    for _ in range(3):
-                        gc.collect()
-                        torch.cuda.empty_cache()
-
-                    # Final garbage collection
                     gc.collect()
                     print("GPU memory cleared")
                 except Exception as e:
                     print(f"Error in GPU cleanup: {e}")
-                    # Fallback
-                    try:
-                        for _ in range(5):
-                            torch.cuda.empty_cache()
-                            gc.collect()
-                    except:
-                        pass
         except Exception as e:
             print(f"Error clearing GPU memory: {e}")
 

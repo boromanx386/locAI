@@ -133,8 +133,7 @@
     "manual_min_memories": 3,
     "memory_top_k": 3,
     "memory_max_chars": 1200,
-    "memory_min_similarity": 0.0,
-    "show_prompt_preview": false
+    "memory_min_similarity": 0.0
   },
   "asr": {
     "enabled": false,

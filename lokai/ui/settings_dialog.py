@@ -1246,14 +1246,6 @@ class SettingsDialog(QDialog):
         self.rag_auto_embed_check.setEnabled(False)
         rag_layout.addRow("", self.rag_auto_embed_check)
 
-        # Show prompt preview before sending
-        self.show_prompt_preview_check = QCheckBox("Show prompt preview before sending")
-        self.show_prompt_preview_check.setToolTip(
-            "When enabled, shows a preview dialog with the full prompt before sending to the model.\n"
-            "Useful for debugging and understanding what context the model receives."
-        )
-        rag_layout.addRow("", self.show_prompt_preview_check)
-
         rag_group.setLayout(rag_layout)
         layout.addWidget(rag_group)
 
@@ -2478,11 +2470,6 @@ class SettingsDialog(QDialog):
         if hasattr(self, "rag_auto_embed_check"):
             self.rag_auto_embed_check.setChecked(False)
 
-        # Show prompt preview option
-        show_preview = self.config_manager.get("rag.show_prompt_preview", False)
-        if hasattr(self, "show_prompt_preview_check"):
-            self.show_prompt_preview_check.setChecked(show_preview)
-
         # Manual memory settings
         manual_min = self.config_manager.get("rag.manual_min_memories", 3)
         if hasattr(self, "manual_min_memories_spin"):
@@ -2885,9 +2872,6 @@ class SettingsDialog(QDialog):
         self.config_manager.set("rag.force_cpu", self.rag_force_cpu_check.isChecked())
         # Manual-only embedding enforced (never auto-embed).
         self.config_manager.set("rag.auto_embed", False)
-        # Show prompt preview option
-        if hasattr(self, "show_prompt_preview_check"):
-            self.config_manager.set("rag.show_prompt_preview", self.show_prompt_preview_check.isChecked())
         # Manual memory settings
         if hasattr(self, "manual_min_memories_spin"):
             self.config_manager.set(

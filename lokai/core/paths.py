@@ -10,6 +10,24 @@ from typing import Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from lokai.core.config_manager import ConfigManager
 
+
+def get_package_root() -> Path:
+    """
+    Return the lokai package root directory (parent of lokai/core).
+    Use this for resource paths (icons, assets) so they resolve correctly
+    regardless of current working directory.
+    """
+    return Path(__file__).resolve().parent.parent
+
+
+def get_resource_path(relative_path: str) -> Path:
+    """
+    Resolve a path relative to the package root.
+    Example: get_resource_path("icons/logo.png") -> /path/to/lokai/icons/logo.png
+    """
+    return get_package_root() / relative_path
+
+
 # --- Subdirectory names (single source of truth) ---
 SUBDIR_CHAT_EMBEDDINGS = "chat_embeddings"
 SUBDIR_GENERATED_IMAGES = "generated_images"
