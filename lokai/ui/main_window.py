@@ -2329,9 +2329,6 @@ class MainWindow(QMainWindow):
                 # Auto-speak if enabled
                 if self.tts_engine and self.config_manager.get("tts.auto_speak", False):
                     if response_text:
-                        # Small delay to ensure UI is updated
-                        from PySide6.QtCore import QTimer
-
                         QTimer.singleShot(500, lambda: self._speak_text(response_text))
 
                 self.chat_widget.finish_ai_message()
@@ -2401,9 +2398,6 @@ class MainWindow(QMainWindow):
                 # Auto-speak if enabled
                 if self.tts_engine and self.config_manager.get("tts.auto_speak", False):
                     if response_text:
-                        # Small delay to ensure UI is updated
-                        from PySide6.QtCore import QTimer
-
                         QTimer.singleShot(500, lambda: self._speak_text(response_text))
 
                 self.chat_widget.finish_ai_message()
@@ -3099,21 +3093,6 @@ class MainWindow(QMainWindow):
 
         self._clear_gpu_memory()
 
-        # Aggressive GPU memory cleanup before video generation
-        try:
-            import torch
-
-            if torch.cuda.is_available():
-                import gc
-
-                print("Performing aggressive GPU memory cleanup...")
-                for _ in range(10):
-                    gc.collect()
-                    torch.cuda.empty_cache()
-                print("GPU memory cleanup complete")
-        except ImportError:
-            pass  # torch not available
-
         # Add user message
         self.chat_widget.add_user_message("Generate video from image")
 
@@ -3305,55 +3284,7 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 print(f"Error unloading ASR engine: {e}")
 
-        # Force final GPU memory cleanup (aggressive)
-        try:
-            import torch
-            import gc
-            import os
-
-            # Force garbage collection multiple times
-            for _ in range(3):
-                gc.collect()
-
-            # Clear CUDA cache if available (very aggressive cleanup)
-            if torch.cuda.is_available():
-                # Reset CUDA context to force release of all memory
-                try:
-                    # Get current device
-                    device = torch.cuda.current_device()
-                    # Synchronize all operations
-                    torch.cuda.synchronize(device)
-
-                    # Multiple cache clears
-                    for _ in range(5):
-                        torch.cuda.empty_cache()
-
-                    # Try to reset CUDA context (if possible)
-                    try:
-                        torch.cuda.reset_peak_memory_stats(device)
-                    except:
-                        pass
-
-                    # Collect IPC resources
-                    try:
-                        torch.cuda.ipc_collect()
-                    except AttributeError:
-                        pass
-
-                    # Final garbage collection
-                    gc.collect()
-
-                    print("GPU memory cache aggressively cleared")
-                except Exception as e:
-                    print(f"Error in aggressive GPU cleanup: {e}")
-                    # Fallback: try basic cleanup
-                    try:
-                        torch.cuda.empty_cache()
-                        gc.collect()
-                    except:
-                        pass
-        except Exception as e:
-            print(f"Error clearing GPU cache: {e}")
+        self._clear_gpu_memory()
 
         # Save any pending configuration
         try:

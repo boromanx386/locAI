@@ -90,14 +90,10 @@ class AudioGenerator:
         if self.storage_path:
             self.setup_environment(self.storage_path)
 
-        # Clear GPU memory before loading model
         if torch.cuda.is_available():
-            print("[AudioGenerator] Clearing GPU memory before loading audio model...")
             import gc
-            for _ in range(5):
-                gc.collect()
-                torch.cuda.empty_cache()
-            print("[AudioGenerator] GPU memory cleared")
+            gc.collect()
+            torch.cuda.empty_cache()
 
         try:
             self.pipeline = StableAudioPipeline.from_pretrained(
@@ -177,12 +173,10 @@ class AudioGenerator:
             audio_length_in_s = min(audio_length_in_s, 47.0)
             audio_length_in_s = max(audio_length_in_s, 1.0)
 
-            # Clear GPU memory before generation
             if torch.cuda.is_available():
                 import gc
-                for _ in range(2):
-                    gc.collect()
-                    torch.cuda.empty_cache()
+                gc.collect()
+                torch.cuda.empty_cache()
 
             # Generator for reproducibility
             generator = None
@@ -316,13 +310,10 @@ class AudioGenerator:
             self.pipeline = None
             self.current_model = None
 
-            # Clear GPU cache
             import gc
-
+            gc.collect()
             if torch.cuda.is_available():
-                for _ in range(5):
-                    gc.collect()
-                    torch.cuda.empty_cache()
+                torch.cuda.empty_cache()
 
             print("Audio model unloaded and GPU memory freed")
 
@@ -347,33 +338,16 @@ class AudioGenerator:
                 except Exception as e:
                     print(f"Error moving audio model to CPU: {e}")
 
-            # Aggressive GPU memory cleanup
             import gc
-
+            gc.collect()
             if torch.cuda.is_available():
                 try:
-                    device = torch.cuda.current_device()
-                    torch.cuda.synchronize(device)
-
-                    for _ in range(10):
-                        torch.cuda.empty_cache()
-
-                    try:
-                        torch.cuda.reset_peak_memory_stats(device)
-                    except:
-                        pass
-
+                    torch.cuda.synchronize()
+                    torch.cuda.empty_cache()
                     try:
                         torch.cuda.ipc_collect()
                     except AttributeError:
                         pass
-
-                    for _ in range(3):
-                        gc.collect()
-                        torch.cuda.empty_cache()
-
-                    gc.collect()
-                    print("GPU memory cleared")
                 except Exception as e:
                     print(f"Error in GPU cleanup: {e}")
         except Exception as e:

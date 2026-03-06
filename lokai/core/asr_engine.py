@@ -382,20 +382,13 @@ class ASREngine:
             return
 
         try:
-            # Aggressive GPU memory cleanup
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
-                for _ in range(3):
-                    torch.cuda.empty_cache()
+                torch.cuda.empty_cache()
                 try:
                     torch.cuda.ipc_collect()
                 except AttributeError:
                     pass
-                try:
-                    torch.cuda.reset_peak_memory_stats()
-                except:
-                    pass
-                print("ASR GPU memory cleared")
         except Exception as e:
             print(f"Error clearing ASR GPU memory: {e}")
 

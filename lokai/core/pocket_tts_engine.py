@@ -529,22 +529,13 @@ class PocketTTSEngine:
         try:
             import torch
             import gc
-            
+            gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
-                for _ in range(3):
-                    torch.cuda.empty_cache()
+                torch.cuda.empty_cache()
                 try:
                     torch.cuda.ipc_collect()
                 except AttributeError:
                     pass
-                try:
-                    torch.cuda.reset_peak_memory_stats()
-                except:
-                    pass
-                gc.collect()
-                print("Pocket TTS GPU memory cleared")
-        except ImportError:
-            pass
-        except Exception as e:
+        except Exception:
             pass

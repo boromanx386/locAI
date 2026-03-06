@@ -574,6 +574,7 @@ class OllamaClient:
         This is the official Ollama way to immediately free VRAM.
         Falls back to subprocess 'ollama stop' if the API call fails.
         """
+        success = False
         try:
             response = self.session.post(
                 f"{self.base_url}/api/generate",
@@ -582,28 +583,46 @@ class OllamaClient:
             )
             if response.status_code == 200:
                 print(f"[VRAM] Model '{model_name}' unloaded via API (keep_alive=0)")
-                return True
+                success = True
             else:
                 print(f"[VRAM] API unload failed for '{model_name}': HTTP {response.status_code}, trying subprocess...")
         except Exception as e:
             print(f"[VRAM] API unload error for '{model_name}': {e}, trying subprocess...")
 
-        # Fallback: subprocess ollama stop
+        if not success:
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ["ollama", "stop", model_name],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if result.returncode == 0:
+                    print(f"[VRAM] Model '{model_name}' stopped via subprocess")
+                    success = True
+                else:
+                    print(f"[VRAM] subprocess stop failed for '{model_name}': {result.stderr.strip()}")
+            except Exception as e2:
+                print(f"[VRAM] Both API and subprocess failed for '{model_name}': {e2}")
+
         try:
-            import subprocess
-            result = subprocess.run(
-                ["ollama", "stop", model_name],
-                capture_output=True, text=True, timeout=10,
-            )
-            if result.returncode == 0:
-                print(f"[VRAM] Model '{model_name}' stopped via subprocess")
-                return True
-            else:
-                print(f"[VRAM] subprocess stop failed for '{model_name}': {result.stderr.strip()}")
-                return False
-        except Exception as e2:
-            print(f"[VRAM] Both API and subprocess failed for '{model_name}': {e2}")
-            return False
+            import torch
+            import gc
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+                try:
+                    torch.cuda.ipc_collect()
+                except AttributeError:
+                    pass
+                try:
+                    torch.cuda.reset_peak_memory_stats()
+                except Exception:
+                    pass
+                gc.collect()
+        except Exception:
+            pass
+
+        return success
 
     def unload_all_models_silent(self) -> None:
         """
@@ -656,6 +675,20 @@ class OllamaClient:
                     pass
             else:
                 print("[VRAM] No Ollama models were loaded in memory")
+
+            try:
+                import torch
+                import gc
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                    torch.cuda.empty_cache()
+                    try:
+                        torch.cuda.ipc_collect()
+                    except AttributeError:
+                        pass
+                    gc.collect()
+            except Exception:
+                pass
 
         except Exception as e:
             print(f"[VRAM] Error in silent unload: {e}")
