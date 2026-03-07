@@ -57,6 +57,9 @@ import json
 import math
 import re
 
+# Tools that are not executed immediately - they run after LLM finishes and models unload
+DEFERRED_TOOLS = {"generate_image", "generate_audio"}
+
 
 def _is_private_or_disallowed_url(url: str) -> bool:
     """
@@ -316,7 +319,48 @@ def get_available_tools(config_manager: Optional["ConfigManager"] = None) -> lis
             }
         }
     )
-    
+
+    # generate_image - deferred (runs after LLM unloads)
+    if is_tool_enabled("generate_image", True):
+        tools.append({
+            "type": "function",
+            "function": {
+                "name": "generate_image",
+                "description": "Generate an image from a text description. Use when user asks to create, draw, or generate an image, picture, illustration, or artwork. Always write the prompt in English - the image model works best with English prompts.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {
+                            "type": "string",
+                            "description": "Detailed description of the image to generate. Must be in English - translate from user's language if needed."
+                        }
+                    },
+                    "required": ["prompt"]
+                }
+            }
+        })
+
+    # generate_audio - deferred (runs after LLM unloads)
+    # Uses Stable Audio - generates SOUNDS/MUSIC from description, NOT text-to-speech
+    if is_tool_enabled("generate_audio", True):
+        tools.append({
+            "type": "function",
+            "function": {
+                "name": "generate_audio",
+                "description": "Generate sounds or music from a text description. Use when user asks for music, instrument sounds, sound effects, beats, ambient audio, etc. This is NOT text-to-speech - it generates audio like drum beats, piano melodies, electronic music from a descriptive prompt. Always provide the prompt in English.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "text": {
+                            "type": "string",
+                            "description": "Description of the audio to generate (e.g. 'heavy bass drum beat', 'piano melody', 'ambient electronic music'). Must be in English - translate from user's language if needed. This describes the SOUND to create, not text to speak."
+                        }
+                    },
+                    "required": ["text"]
+                }
+            }
+        })
+
     return tools
 
 

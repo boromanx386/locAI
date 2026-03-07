@@ -44,7 +44,7 @@ from lokai.ui.image_worker import ImageGenerationWorker
 from lokai.ui.video_worker import VideoGenerationWorker
 from lokai.ui.audio_worker import AudioGenerationWorker
 from lokai.core.asr_engine import ASREngine
-from lokai.core.tools_handler import get_available_tools, execute_tool
+from lokai.core.tools_handler import get_available_tools, execute_tool, DEFERRED_TOOLS
 from lokai.core.paths import (
     get_embeddings_dir,
     get_models_storage_path,
@@ -894,6 +894,9 @@ class MainWindow(QMainWindow):
             self.chat_widget.memory_stats_requested.connect(
                 self.on_memory_stats_requested
             )
+        self.chat_widget.generation_status_changed.connect(
+            self._on_generation_status_changed
+        )
 
         # Initialize image generator (if enabled) - delayed to speed up startup
         self.image_generator = None
@@ -1513,9 +1516,7 @@ class MainWindow(QMainWindow):
             # Connect signals - create bubble on first chunk
             worker.chunk_received.connect(self._on_chunk_received)
             worker.thinking_chunk_received.connect(self._on_thinking_chunk_received)
-            worker.finished.connect(
-                lambda content: self._on_tools_response_finished(content)
-            )
+            worker.finished.connect(self._on_tools_response_finished)
             worker.error_occurred.connect(self._on_response_error)
             # Clear stream chunk buffer for this request
             self._chunk_buffer.clear()
@@ -1982,6 +1983,11 @@ class MainWindow(QMainWindow):
         )
         dialog.exec()
 
+    def _on_generation_status_changed(self, text: str):
+        """Show generation status in status bar footer."""
+        if hasattr(self, "status_bar") and self.status_bar:
+            self.status_bar.showMessage(text if text else "Ready")
+
     def on_memory_stats_requested(self):
         """Show stats about user-curated semantic memory for this chat."""
         if not self.embedding_enabled:
@@ -2383,9 +2389,12 @@ class MainWindow(QMainWindow):
             self.chat_widget.set_send_enabled(True)
             self._on_response_error(error_msg)
 
-    def _on_tools_response_finished(self, content: str):
+    def _on_tools_response_finished(
+        self, content: str, deferred_actions: list | None = None
+    ):
         """Handle tools response completion (from ChatToolsWorker)."""
         try:
+            deferred = deferred_actions if deferred_actions is not None else []
             if not self._stream_active:
                 return
             self._flush_thinking_buffer()
@@ -2426,8 +2435,12 @@ class MainWindow(QMainWindow):
                         -(max_history * 2) :
                     ]
 
-                # Auto-speak if enabled
-                if self.tts_engine and self.config_manager.get("tts.auto_speak", False):
+                # Auto-speak if enabled (only when no deferred audio - avoid double speak)
+                if (
+                    self.tts_engine
+                    and self.config_manager.get("tts.auto_speak", False)
+                    and not any(a[0] == "generate_audio" for a in (deferred or []))
+                ):
                     if response_text:
                         QTimer.singleShot(500, lambda: self._speak_text(response_text))
 
@@ -2439,8 +2452,12 @@ class MainWindow(QMainWindow):
                 self.chat_widget.append_ai_chunk("No response received from model.")
                 self.chat_widget.finish_ai_message()
 
-            # Re-enable send button
-            self.chat_widget.set_send_enabled(True)
+            # Run deferred actions (image/audio) after LLM finished - unload first
+            if deferred:
+                self._run_deferred_actions(deferred)
+            else:
+                self.chat_widget.set_send_enabled(True)
+
             self._update_context_usage_status()
             self._response_started_for_request = False
             self._stream_active = False
@@ -2478,9 +2495,6 @@ class MainWindow(QMainWindow):
             ):
                 self.chat_widget.current_ai_bubble.flush_display()
             self.chat_widget.finish_ai_message()
-            # Hide status indicator on error
-            if hasattr(self.chat_widget, "status_indicator"):
-                self.chat_widget.status_indicator.setVisible(False)
             # Re-enable send button
             self.chat_widget.set_send_enabled(True)
             self._response_started_for_request = False
@@ -2720,8 +2734,78 @@ class MainWindow(QMainWindow):
             if index >= 0:
                 self.status_panel.tts_voice_combo.setCurrentIndex(index)
 
-    def on_image_prompt_sent(self, prompt: str, init_image_path: str = ""):
-        """Handle image generation prompt."""
+    def _run_deferred_actions(self, deferred_actions: list):
+        """Run deferred tools (generate_image, generate_audio) after LLM unload."""
+        if not deferred_actions:
+            self.chat_widget.set_send_enabled(True)
+            return
+        # Store remaining for chaining (when first worker finishes)
+        self._pending_deferred_actions = deferred_actions[1:]
+        first = deferred_actions[0]
+        name, args = first[0], first[1]
+        # Unload all models before running
+        print("Unloading models before deferred action...")
+        self.ollama_client.cancel_all_requests()
+        self.ollama_client.unload_all_models_silent()
+        if (
+            hasattr(self, "audio_generator")
+            and self.audio_generator
+            and self.audio_generator.pipeline is not None
+        ):
+            self.audio_generator.unload_model()
+        if (
+            hasattr(self, "image_generator")
+            and self.image_generator
+            and self.image_generator.pipeline is not None
+        ):
+            self.image_generator.unload_model()
+        self._clear_gpu_memory()
+        if name == "generate_image":
+            prompt = (args or {}).get("prompt", "").strip()
+            if prompt and self.image_generator:
+                self._run_image_generation(
+                    prompt, init_image_path="", add_user_msg=False
+                )
+            else:
+                if not prompt:
+                    self.status_bar.showMessage("Generate image: empty prompt skipped")
+                elif not self.image_generator:
+                    self.status_bar.showMessage(
+                        "Image generation not available. Check Settings."
+                    )
+                self._continue_deferred_or_enable_send()
+        elif name == "generate_audio":
+            text = (args or {}).get("text", "").strip()
+            if text and self.audio_generator:
+                self._run_audio_generation(text, add_user_msg=False)
+            else:
+                if not text:
+                    self.status_bar.showMessage("Generate audio: empty text skipped")
+                elif not self.audio_generator:
+                    self.status_bar.showMessage(
+                        "Audio generation not available. Check Settings."
+                    )
+                self._continue_deferred_or_enable_send()
+        else:
+            self._continue_deferred_or_enable_send()
+
+    def _continue_deferred_or_enable_send(self):
+        """Process next deferred action or re-enable send button."""
+        pending = getattr(self, "_pending_deferred_actions", None) or []
+        if pending:
+            self._pending_deferred_actions = []
+            self._run_deferred_actions(pending)
+        else:
+            self._pending_deferred_actions = []
+            self.chat_widget.set_send_enabled(True)
+
+    def _run_image_generation(
+        self,
+        prompt: str,
+        init_image_path: str = "",
+        add_user_msg: bool = True,
+    ):
+        """Run image generation (used by on_image_prompt_sent and deferred tools)."""
         if not self.image_generator:
             QMessageBox.warning(
                 self,
@@ -2732,49 +2816,33 @@ class MainWindow(QMainWindow):
                 "2. Set model storage path in Settings > Models",
             )
             return
-
-        # Unload other models to free VRAM before loading image model
-        print("Unloading other models to free GPU memory...")
-        self.ollama_client.cancel_all_requests()
-        self.ollama_client.unload_all_models_silent()
-        if (
-            hasattr(self, "audio_generator")
-            and self.audio_generator
-            and self.audio_generator.pipeline is not None
-        ):
-            self.audio_generator.unload_model()
-        self._clear_gpu_memory()
-
-        # Add user message showing the prompt
-        user_msg = (
-            f"Image to image: {prompt}"
-            if init_image_path
-            else f"Generate image: {prompt}"
-        )
-        self.chat_widget.add_user_message(user_msg)
-
-        # Determine seed to use
+        if add_user_msg:
+            print("Unloading other models to free GPU memory...")
+            self.ollama_client.cancel_all_requests()
+            self.ollama_client.unload_all_models_silent()
+            if (
+                hasattr(self, "audio_generator")
+                and self.audio_generator
+                and self.audio_generator.pipeline is not None
+            ):
+                self.audio_generator.unload_model()
+            self._clear_gpu_memory()
+            user_msg = (
+                f"Image to image: {prompt}"
+                if init_image_path
+                else f"Generate image: {prompt}"
+            )
+            self.chat_widget.add_user_message(user_msg)
         import random
 
         if self.seed_locked and self.last_image_seed is not None:
-            # Use locked seed (same as last time)
             seed_to_use = self.last_image_seed
         else:
-            # Generate random seed
             seed_to_use = random.randint(0, 2147483647)
             self.last_image_seed = seed_to_use
         self.current_seed = seed_to_use
         if self.seed_locked:
             self.update_seed_display()
-
-        # Show generating message
-        generating_bubble = self.chat_widget.messages_layout.itemAt(
-            self.chat_widget.messages_layout.count() - 2
-        )
-        if generating_bubble:
-            generating_bubble = generating_bubble.widget()
-
-        # Start image generation in background thread
         worker = ImageGenerationWorker(
             self.image_generator,
             prompt,
@@ -2787,9 +2855,12 @@ class MainWindow(QMainWindow):
         worker.progress_updated.connect(self._on_image_progress)
         self.current_image_worker = worker
         worker.finished.connect(lambda: setattr(self, "current_image_worker", None))
-        # Disable send button while generating
         self.chat_widget.set_send_enabled(False)
         worker.start()
+
+    def on_image_prompt_sent(self, prompt: str, init_image_path: str = ""):
+        """Handle image generation prompt."""
+        self._run_image_generation(prompt, init_image_path, add_user_msg=True)
 
     def _on_image_generated(self, image_path: str):
         """Handle successful image generation."""
@@ -2810,8 +2881,7 @@ class MainWindow(QMainWindow):
                 print("Clearing GPU memory after image generation...")
                 self.image_generator.clear_gpu_memory()
 
-            # Re-enable send button
-            self.chat_widget.set_send_enabled(True)
+            self._continue_deferred_or_enable_send()
         except Exception as e:
             print(f"Error displaying image: {e}")
             QMessageBox.warning(self, "Error", f"Error displaying image: {e}")
@@ -2823,8 +2893,7 @@ class MainWindow(QMainWindow):
                 except:
                     pass
 
-            # Re-enable send button even on error
-            self.chat_widget.set_send_enabled(True)
+            self._continue_deferred_or_enable_send()
 
     def on_text_selected_for_tts(self, text: str):
         """Handle text selection for TTS."""
@@ -2854,30 +2923,9 @@ class MainWindow(QMainWindow):
 
     def on_text_selected_for_image(self, text: str):
         """Handle text selection for image generation."""
-        if not self.image_generator:
-            self.status_bar.showMessage(
-                "Image generation not available. Check Settings > Models."
-            )
-            return
-
-        # Unload other models to free VRAM before loading image model
-        print("Unloading other models to free GPU memory...")
-        self.ollama_client.cancel_all_requests()
-        self.ollama_client.unload_all_models_silent()
-        if (
-            hasattr(self, "audio_generator")
-            and self.audio_generator
-            and self.audio_generator.pipeline is not None
-        ):
-            self.audio_generator.unload_model()
-        self._clear_gpu_memory()
-
-        # Use selected text as prompt
         prompt = text.strip()
         if not prompt:
             return
-
-        # Generate image using current settings
         self.on_image_prompt_sent(prompt)
 
     def _ensure_semantic_memory_ready(self) -> bool:
@@ -2975,8 +3023,8 @@ class MainWindow(QMainWindow):
         )
         self.status_bar.showMessage("Remembered message for semantic memory")
 
-    def on_audio_prompt_sent(self, prompt: str):
-        """Handle audio generation prompt."""
+    def _run_audio_generation(self, prompt: str, add_user_msg: bool = True):
+        """Run audio generation (used by on_audio_prompt_sent and deferred tools)."""
         if not self.audio_generator:
             QMessageBox.warning(
                 self,
@@ -2987,37 +3035,28 @@ class MainWindow(QMainWindow):
                 "2. Set model storage path in Settings > Models",
             )
             return
-
-        # Unload other models to free VRAM before loading audio model
-        print("Unloading other models to free GPU memory...")
-        self.ollama_client.cancel_all_requests()
-        self.ollama_client.unload_all_models_silent()
-        if (
-            hasattr(self, "image_generator")
-            and self.image_generator
-            and self.image_generator.pipeline is not None
-        ):
-            self.image_generator.unload_model()
-        self._clear_gpu_memory()
-
-        # Add user message showing the prompt
-        self.chat_widget.add_user_message(f"Generate audio: {prompt}")
-
-        # Determine seed to use
+        if add_user_msg:
+            print("Unloading other models to free GPU memory...")
+            self.ollama_client.cancel_all_requests()
+            self.ollama_client.unload_all_models_silent()
+            if (
+                hasattr(self, "image_generator")
+                and self.image_generator
+                and self.image_generator.pipeline is not None
+            ):
+                self.image_generator.unload_model()
+            self._clear_gpu_memory()
+            self.chat_widget.add_user_message(f"Generate audio: {prompt}")
         import random
 
         if self.seed_locked and self.last_image_seed is not None:
-            # Use locked seed (same as last time)
             seed_to_use = self.last_image_seed
         else:
-            # Generate random seed
             seed_to_use = random.randint(0, 2147483647)
             self.last_image_seed = seed_to_use
         self.current_seed = seed_to_use
         if self.seed_locked:
             self.update_seed_display()
-
-        # Start audio generation in background thread
         worker = AudioGenerationWorker(
             self.audio_generator, prompt, self.config_manager, seed=seed_to_use
         )
@@ -3026,36 +3065,18 @@ class MainWindow(QMainWindow):
         worker.progress_updated.connect(self._on_audio_progress)
         self.current_audio_worker = worker
         worker.finished.connect(lambda: setattr(self, "current_audio_worker", None))
-        # Disable send button while generating
         self.chat_widget.set_send_enabled(False)
         worker.start()
 
+    def on_audio_prompt_sent(self, prompt: str):
+        """Handle audio generation prompt."""
+        self._run_audio_generation(prompt, add_user_msg=True)
+
     def on_text_selected_for_audio(self, text: str):
         """Handle text selection for audio generation."""
-        if not self.audio_generator:
-            self.status_bar.showMessage(
-                "Audio generation not available. Check Settings > Models."
-            )
-            return
-
-        # Unload other models to free VRAM before loading audio model
-        print("Unloading other models to free GPU memory...")
-        self.ollama_client.cancel_all_requests()
-        self.ollama_client.unload_all_models_silent()
-        if (
-            hasattr(self, "image_generator")
-            and self.image_generator
-            and self.image_generator.pipeline is not None
-        ):
-            self.image_generator.unload_model()
-        self._clear_gpu_memory()
-
-        # Use selected text as prompt
         prompt = text.strip()
         if not prompt:
             return
-
-        # Generate audio using current settings
         self.on_audio_prompt_sent(prompt)
 
     def _on_audio_generated(self, audio_path: str):
@@ -3073,11 +3094,11 @@ class MainWindow(QMainWindow):
                 print("Clearing GPU memory after audio generation...")
                 self.audio_generator.unload_model()
 
-            self.chat_widget.set_send_enabled(True)
+            self._continue_deferred_or_enable_send()
         except Exception as e:
             print(f"Error displaying audio: {e}")
             QMessageBox.warning(self, "Error", f"Error displaying audio: {e}")
-            self.chat_widget.set_send_enabled(True)
+            self._continue_deferred_or_enable_send()
 
     def _on_audio_error(self, error_msg: str):
         """Handle audio generation error."""
@@ -3090,7 +3111,7 @@ class MainWindow(QMainWindow):
             except:
                 pass
 
-        self.chat_widget.set_send_enabled(True)
+        self._continue_deferred_or_enable_send()
 
     def _on_audio_progress(self, progress: int):
         """Handle audio generation progress."""
@@ -3193,8 +3214,7 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 print(f"Error clearing GPU memory: {e}")
 
-        # Re-enable send button
-        self.chat_widget.set_send_enabled(True)
+        self._continue_deferred_or_enable_send()
 
     def _on_image_progress(self, progress: int):
         """Handle image generation progress."""
@@ -3481,7 +3501,7 @@ class ChatToolsWorker(QThread):
 
     chunk_received = Signal(str)
     thinking_chunk_received = Signal(str)
-    finished = Signal(str)  # final response
+    finished = Signal(str, list)  # final response, deferred_actions
     error_occurred = Signal(str)
     tool_call_executed = Signal(str, str)  # tool_name, result
 
@@ -3499,8 +3519,11 @@ class ChatToolsWorker(QThread):
 
     def run(self):
         """Run in background thread - handle tool calls automatically."""
+        import json
+
         try:
             current_messages = self.messages.copy()
+            deferred_actions = []
             iteration = 0
 
             while iteration < self.max_iterations:
@@ -3544,50 +3567,57 @@ class ChatToolsWorker(QThread):
                 # Add assistant message to conversation
                 current_messages.append(message)
 
-                # If there are tool calls, execute them
+                # If there are tool calls, execute or defer them
                 if tool_calls:
                     print(f"[TOOLS] Model je pozvao {len(tool_calls)} tool(s)")
 
                     tool_results = []
                     for tool_call in tool_calls:
                         func_name = tool_call["function"]["name"]
-                        func_args = tool_call["function"]["arguments"]
+                        func_args_raw = tool_call["function"]["arguments"]
                         tool_id = tool_call["id"]
 
-                        print(
-                            f"[TOOLS] Izvršavam {func_name} sa argumentima: {func_args}"
-                        )
-
-                        # Emit tool call signal BEFORE execution to show status
-                        self.tool_call_executed.emit(func_name, "")
-
-                        # Execute tool
+                        # Parse arguments (Ollama returns JSON string)
                         try:
-                            tool_result = execute_tool(func_name, func_args)
-                            self.tool_call_executed.emit(func_name, tool_result)
+                            func_args = (
+                                json.loads(func_args_raw)
+                                if isinstance(func_args_raw, str)
+                                else (func_args_raw or {})
+                            )
+                        except (json.JSONDecodeError, TypeError):
+                            func_args = {}
 
-                            # Add tool result to messages
-                            tool_results.append(
-                                {
-                                    "role": "tool",
-                                    "content": tool_result,
-                                    "tool_call_id": tool_id,
-                                    "name": func_name,
-                                }
+                        if func_name in DEFERRED_TOOLS:
+                            # Defer: run after LLM finishes and models unload
+                            deferred_actions.append((func_name, func_args))
+                            tool_result = (
+                                "Action queued. Will run after your response completes."
                             )
-                        except Exception as e:
-                            error_result = (
-                                f"Greška pri izvršavanju tool-a {func_name}: {str(e)}"
+                            print(f"[TOOLS] Deferring {func_name} (runs after LLM unloads)")
+                        else:
+                            # Execute immediately
+                            print(
+                                f"[TOOLS] Izvršavam {func_name} sa argumentima: {func_args_raw}"
                             )
-                            print(f"[TOOLS] {error_result}")
-                            tool_results.append(
-                                {
-                                    "role": "tool",
-                                    "content": error_result,
-                                    "tool_call_id": tool_id,
-                                    "name": func_name,
-                                }
-                            )
+                            self.tool_call_executed.emit(func_name, "")
+
+                            try:
+                                tool_result = execute_tool(func_name, func_args)
+                                self.tool_call_executed.emit(func_name, tool_result)
+                            except Exception as e:
+                                tool_result = (
+                                    f"Greška pri izvršavanju tool-a {func_name}: {str(e)}"
+                                )
+                                print(f"[TOOLS] {tool_result}")
+
+                        tool_results.append(
+                            {
+                                "role": "tool",
+                                "content": tool_result,
+                                "tool_call_id": tool_id,
+                                "name": func_name,
+                            }
+                        )
 
                     # Add tool results to messages and continue loop
                     current_messages.extend(tool_results)
@@ -3595,11 +3625,11 @@ class ChatToolsWorker(QThread):
 
                 # No tool calls - finish
                 if content:
-                    self.finished.emit(content)
+                    self.finished.emit(content, deferred_actions)
                     return
                 else:
                     # Empty content but no tool calls - might be thinking
-                    self.finished.emit(content or "")
+                    self.finished.emit(content or "", deferred_actions)
                     return
 
             # Max iterations reached

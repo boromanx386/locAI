@@ -1110,6 +1110,7 @@ class ChatWidget(QWidget):
     remember_selected_text = Signal(str, str, int)  # text, role, message_index
     remember_message = Signal(str, str, int)  # full_text, role, message_index
     memory_stats_requested = Signal()
+    generation_status_changed = Signal(str)  # Shown in status bar footer
 
     def __init__(
         self, ollama_client: OllamaClient, config_manager: ConfigManager = None
@@ -1350,25 +1351,6 @@ class ChatWidget(QWidget):
         self.send_btn.clicked.connect(self.send_message)
         input_layout.addWidget(self.send_btn)
 
-        # Status indicator (for showing when LLM is generating)
-        self.status_indicator = QLabel("")
-        self.status_indicator.setMaximumHeight(24)
-        self.status_indicator.setVisible(False)
-        self.status_indicator.setStyleSheet(
-            """
-            QLabel {
-                background-color: rgba(74, 158, 255, 0.2);
-                border: 1px solid rgba(74, 158, 255, 0.5);
-                border-radius: 12px;
-                padding: 4px 10px;
-                color: #4A9EFF;
-                font-size: 11px;
-                font-weight: 500;
-            }
-        """
-        )
-        input_layout.addWidget(self.status_indicator)
-
         input_frame_v.addLayout(input_layout)
         self.input_frame.setLayout(input_frame_v)
         # Accept file drops on the frame (not on input field) so cursor stays ok
@@ -1447,16 +1429,8 @@ class ChatWidget(QWidget):
             self.typing_indicator.start()
 
         self.scroll_to_bottom()
-        # Show status indicator
-        if model_name:
-            self.status_indicator.setText(f"⚡ {model_name}")
-            self.status_indicator.setToolTip(
-                f"Generating response with {model_name}..."
-            )
-        else:
-            self.status_indicator.setText("⚡ Generating...")
-            self.status_indicator.setToolTip("Generating response...")
-        self.status_indicator.setVisible(True)
+        status_text = model_name or "Generating..."
+        self.generation_status_changed.emit(status_text)
 
     def append_ai_chunk(self, chunk: str):
         """Append chunk to current AI message (streaming)."""
@@ -1551,15 +1525,12 @@ class ChatWidget(QWidget):
             self.current_ai_bubble.set_thinking_collapsed(True)
 
     def update_tool_status(self, tool_name: str):
-        """Update status indicator to show tool being executed."""
+        """Update status bar to show tool being executed."""
         if not tool_name:
             return
-        # Format tool name nicely (e.g. "search_web" -> "Search web")
         display_name = tool_name.replace("_", " ").title()
-        self.status_indicator.setText(f"🔧 {display_name}")
-        self.status_indicator.setToolTip(f"Executing {display_name}...")
-        self.status_indicator.setVisible(True)
-        print(f"[UI] Status updated to: 🔧 {display_name}")
+        self.generation_status_changed.emit(display_name)
+        print(f"[UI] Status updated to: {display_name}")
 
     def set_current_ai_bubble_metadata(self, *, role: str, message_index: int):
         """Attach metadata (role/index) to the currently streaming AI bubble."""
@@ -1580,8 +1551,7 @@ class ChatWidget(QWidget):
             self.typing_indicator = None
         self.current_ai_bubble = None
         self.scroll_to_bottom()
-        # Hide status indicator
-        self.status_indicator.setVisible(False)
+        self.generation_status_changed.emit("")
         # Restore input focus and cursor visibility (fixes cursor sometimes stuck / not blinking)
         QTimer.singleShot(50, self._ensure_input_cursor_visible)
 
