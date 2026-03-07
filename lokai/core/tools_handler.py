@@ -326,13 +326,13 @@ def get_available_tools(config_manager: Optional["ConfigManager"] = None) -> lis
             "type": "function",
             "function": {
                 "name": "generate_image",
-                "description": "Generate an image from a text description. Use when user asks to create, draw, or generate an image, picture, illustration, or artwork. Always write the prompt in English - the image model works best with English prompts.",
+                "description": "Generate an image from a text description. Use when user asks to create, draw, or generate an image, picture, illustration, or artwork. Always write the prompt in English. Keep the prompt concise: 2-3 sentences maximum.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "prompt": {
                             "type": "string",
-                            "description": "Detailed description of the image to generate. Must be in English - translate from user's language if needed."
+                            "description": "Description of the image to generate. Must be in English - translate from user's language if needed. Maximum 2-3 sentences - keep it concise for best results."
                         }
                     },
                     "required": ["prompt"]
