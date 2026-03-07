@@ -193,7 +193,7 @@ class ConfigManager:
 
         # Validate theme
         theme = self.get("ui.theme")
-        if theme not in ["dark", "light"]:
+        if theme not in ["dark", "light", "dystopian"]:
             return False, f"Invalid theme: {theme}"
 
         return True, None

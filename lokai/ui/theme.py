@@ -1,14 +1,18 @@
 """
 Theme system for locAI.
 Provides modern, eye-friendly color schemes (without bright green #00FF00).
+Includes dystopian/cyberpunk theme for terminal-style aesthetic.
 """
 from typing import Dict
 
 
 class Theme:
     """Theme management for locAI UI."""
-    
-    # Modern color palette (eye-friendly, no bright green)
+
+    # Monospace font stack for terminal/dystopian aesthetic
+    MONOSPACE_FONT = "'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', monospace"
+
+    # Modern color palette (eye-friendly, no bright green #00FF00)
     DARK_THEME = {
         "primary": "#4A9EFF",          # Calming blue for primary actions
         "secondary": "#6B8E23",         # Olive green (subtle, not bright)
@@ -25,7 +29,25 @@ class Theme:
         "hover": "#3A3A3A",            # Hover effect
         "disabled": "#505050",         # Disabled state
     }
-    
+
+    # Dystopian/cyberpunk terminal aesthetic
+    DYSTOPIAN_THEME = {
+        "primary": "#3D4349",           # Dark gray for buttons
+        "secondary": "#4A5056",         # Slightly lighter gray
+        "background": "#0D1117",        # Deep dark
+        "surface": "#161B22",           # Slightly lighter surface
+        "card": "#21262D",              # Card background
+        "text_primary": "#8FBC8F",      # Softer terminal green (DarkSeaGreen)
+        "text_secondary": "#8B949E",    # Muted gray
+        "accent": "#4A5056",            # Lighter gray for pressed
+        "success": "#8FBC8F",           # Softer green
+        "warning": "#FFB800",           # Amber
+        "error": "#FF4757",             # Red
+        "border": "#30363D",            # Subtle border
+        "hover": "#484F58",             # Hover effect (slightly lighter gray)
+        "disabled": "#2D333B",          # Disabled state
+    }
+
     LIGHT_THEME = {
         "primary": "#1976D2",          # Blue for primary actions
         "secondary": "#558B2F",       # Green for secondary
@@ -47,42 +69,49 @@ class Theme:
     def get_theme(theme_name: str = "dark") -> Dict[str, str]:
         """
         Get theme colors by name.
-        
+
         Args:
-            theme_name: Theme name ("dark" or "light")
-            
+            theme_name: Theme name ("dark", "light", or "dystopian")
+
         Returns:
             Dictionary of color values
         """
         if theme_name == "light":
             return Theme.LIGHT_THEME.copy()
+        if theme_name == "dystopian":
+            return Theme.DYSTOPIAN_THEME.copy()
         return Theme.DARK_THEME.copy()
     
     @staticmethod
     def get_stylesheet(theme_name: str = "dark") -> str:
         """
         Generate QSS stylesheet for the theme.
-        
+
         Args:
-            theme_name: Theme name ("dark" or "light")
-            
+            theme_name: Theme name ("dark", "light", or "dystopian")
+
         Returns:
             QSS stylesheet string
         """
         colors = Theme.get_theme(theme_name)
-        
+        font_family = (
+            Theme.MONOSPACE_FONT
+            if theme_name == "dystopian"
+            else "'Segoe UI', Arial, sans-serif"
+        )
+
         return f"""
         /* Main Window */
         QMainWindow {{
             background: {colors["background"]};
             color: {colors["text_primary"]};
         }}
-        
+
         /* Widgets */
         QWidget {{
             background: {colors["background"]};
             color: {colors["text_primary"]};
-            font-family: 'Segoe UI', Arial, sans-serif;
+            font-family: {font_family};
         }}
         
         /* Buttons */

@@ -139,8 +139,25 @@ class SettingsDialog(QDialog):
         theme_layout = QFormLayout()
 
         self.theme_combo = QComboBox()
-        self.theme_combo.addItems(["dark", "light"])
+        self.theme_combo.addItem("Original Dark", "dark")
+        self.theme_combo.addItem("Original Light", "light")
+        self.theme_combo.addItem("Dystopian", "dystopian")
+        self.theme_combo.setToolTip(
+            "Dystopian: cyberpunk terminal aesthetic with monospace fonts"
+        )
         theme_layout.addRow("Theme:", self.theme_combo)
+
+        self.crt_scanlines_check = QCheckBox("CRT scanline effect")
+        self.crt_scanlines_check.setToolTip(
+            "Overlay horizontal scanlines for retro CRT look. Default ON when Dystopian theme."
+        )
+        theme_layout.addRow("", self.crt_scanlines_check)
+
+        self.neural_filter_check = QCheckBox("Show Neural Filter panel")
+        self.neural_filter_check.setToolTip(
+            "Show panel with raw model thinking stream in real-time. Requires thinking-capable model."
+        )
+        theme_layout.addRow("", self.neural_filter_check)
 
         theme_group.setLayout(theme_layout)
         layout.addWidget(theme_group)
@@ -2344,7 +2361,18 @@ class SettingsDialog(QDialog):
         """Load settings from config."""
         # General
         theme = self.config_manager.get("ui.theme", "dark")
-        self.theme_combo.setCurrentText(theme)
+        idx = self.theme_combo.findData(theme)
+        if idx >= 0:
+            self.theme_combo.setCurrentIndex(idx)
+        else:
+            self.theme_combo.setCurrentIndex(0)
+        crt_enabled = self.config_manager.get("app.crt_enabled")
+        if crt_enabled is None:
+            crt_enabled = theme == "dystopian"
+        self.crt_scanlines_check.setChecked(bool(crt_enabled))
+        self.neural_filter_check.setChecked(
+            self.config_manager.get("app.neural_filter_visible", False)
+        )
 
         # Global shortcuts
         shortcuts_enabled = self.config_manager.get("shortcuts.global.enabled", True)
@@ -2751,7 +2779,20 @@ class SettingsDialog(QDialog):
         self.config_manager.reload_config()
 
         # General
-        self.config_manager.set("ui.theme", self.theme_combo.currentText())
+        theme_value = self.theme_combo.currentData()
+        if theme_value is None:
+            theme_value = self.theme_combo.currentText().lower().replace(" ", "_")
+            if "original_dark" in theme_value:
+                theme_value = "dark"
+            elif "original_light" in theme_value:
+                theme_value = "light"
+        self.config_manager.set("ui.theme", theme_value)
+        self.config_manager.set(
+            "app.crt_enabled", self.crt_scanlines_check.isChecked()
+        )
+        self.config_manager.set(
+            "app.neural_filter_visible", self.neural_filter_check.isChecked()
+        )
 
         # Global shortcuts
         self.config_manager.set(

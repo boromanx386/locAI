@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (
     QStatusBar,
     QMessageBox,
     QFileDialog,
+    QSplitter,
+    QFrame,
 )
 import os
 import sys
@@ -52,6 +54,28 @@ from lokai.core.paths import (
     get_asr_storage_path,
 )
 from lokai.ui.attachments import read_text_file_with_limits, format_file_size
+from lokai.ui.crt_overlay import CRTOverlay
+from lokai.ui.neural_filter_widget import NeuralFilterWidget
+
+
+class CentralWidgetWithOverlay(QWidget):
+    """Central widget that hosts content and optionally a CRT overlay on top."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._crt_overlay = None
+
+    def set_crt_overlay(self, overlay: CRTOverlay):
+        self._crt_overlay = overlay
+        if overlay:
+            overlay.setParent(self)
+            overlay.raise_()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._crt_overlay and self._crt_overlay.isVisible():
+            self._crt_overlay.setGeometry(self.rect())
+            self._crt_overlay.raise_()
 
 
 class MainWindow(QMainWindow):
@@ -161,12 +185,14 @@ class MainWindow(QMainWindow):
         self.chat_widget.append_ai_chunk(text)
 
     def _flush_thinking_buffer(self):
-        """Flush buffered thinking chunks to chat widget."""
+        """Flush buffered thinking chunks to chat widget (skip when Neural Filter is visible)."""
         if not self._thinking_buffer:
             return
         text = "".join(self._thinking_buffer)
         self._thinking_buffer.clear()
         if not text:
+            return
+        if hasattr(self, "neural_filter_widget") and self.neural_filter_widget.isVisible():
             return
         if self.chat_widget.current_ai_bubble is None:
             model = self.status_panel.get_selected_model()
@@ -748,8 +774,8 @@ class MainWindow(QMainWindow):
         # Create status bar
         self.create_status_bar()
 
-        # Create central widget
-        central_widget = QWidget()
+        # Create central widget (with optional CRT overlay support)
+        central_widget = CentralWidgetWithOverlay()
         self.setCentralWidget(central_widget)
 
         # Main layout
@@ -809,9 +835,37 @@ class MainWindow(QMainWindow):
         # Language change is handled through Settings only
         main_layout.addWidget(self.status_panel)
 
-        # Chat widget (center, takes most space)
+        # Content area: chat + optional Neural Filter panel (splitter)
+        content_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.chat_widget = ChatWidget(self.ollama_client, self.config_manager)
-        main_layout.addWidget(self.chat_widget, stretch=1)
+        content_splitter.addWidget(self.chat_widget)
+
+        self.neural_filter_widget = NeuralFilterWidget()
+        self.neural_filter_widget.set_theme(
+            self.config_manager.get("ui.theme", "dark")
+        )
+        content_splitter.addWidget(self.neural_filter_widget)
+        content_splitter.setStretchFactor(0, 1)
+        content_splitter.setStretchFactor(1, 0)
+        content_splitter.setSizes([800, 320])  # Chat gets more space
+        neural_filter_visible = self.config_manager.get(
+            "app.neural_filter_visible", False
+        )
+        self.neural_filter_widget.setVisible(neural_filter_visible)
+
+        main_layout.addWidget(content_splitter, stretch=1)
+
+        # CRT overlay (optional, on top of central content)
+        crt_enabled = self.config_manager.get("app.crt_enabled")
+        if crt_enabled is None:
+            crt_enabled = self.config_manager.get("ui.theme", "dark") == "dystopian"
+        self.crt_overlay = CRTOverlay(central_widget)
+        self.crt_overlay.setVisible(bool(crt_enabled))
+        central_widget.set_crt_overlay(self.crt_overlay)
+
+        # Apply theme to status panel (chat widget reads theme in _update_input_area_style)
+        theme_name_init = self.config_manager.get("ui.theme", "dark")
+        self.status_panel.set_theme(theme_name_init)
 
         # Connect chat widget signals
         self.chat_widget.message_sent.connect(
@@ -1714,6 +1768,27 @@ class MainWindow(QMainWindow):
             theme_name = self.config_manager.get("ui.theme", "dark")
             stylesheet = Theme.get_stylesheet(theme_name)
             self.setStyleSheet(stylesheet)
+            # Apply CRT overlay visibility
+            if hasattr(self, "crt_overlay"):
+                crt_enabled = self.config_manager.get("app.crt_enabled")
+                if crt_enabled is None:
+                    crt_enabled = theme_name == "dystopian"
+                self.crt_overlay.setVisible(bool(crt_enabled))
+                if self.crt_overlay.isVisible():
+                    cw = self.centralWidget()
+                    self.crt_overlay.setGeometry(cw.rect())
+                    self.crt_overlay.raise_()
+            # Apply Neural Filter panel visibility and theme
+            if hasattr(self, "neural_filter_widget"):
+                self.neural_filter_widget.set_theme(theme_name)
+                self.neural_filter_widget.setVisible(
+                    self.config_manager.get("app.neural_filter_visible", False)
+                )
+            # Apply theme to status panel and chat widget (buttons, input border)
+            if hasattr(self, "status_panel"):
+                self.status_panel.set_theme(theme_name)
+            if hasattr(self, "chat_widget"):
+                self.chat_widget.refresh_theme()
 
             # Reinit generators if storage paths changed
             if get_image_storage_path(self.config_manager):
@@ -1994,6 +2069,9 @@ class MainWindow(QMainWindow):
             self._thinking_buffer.append(chunk)
             if not self._thinking_flush_timer.isActive():
                 self._thinking_flush_timer.start(40)
+            # Feed Neural Filter panel if visible
+            if hasattr(self, "neural_filter_widget") and self.neural_filter_widget.isVisible():
+                self.neural_filter_widget.append_chunk(chunk)
         except Exception as e:
             print(f"Error in _on_thinking_chunk_received: {e}")
 

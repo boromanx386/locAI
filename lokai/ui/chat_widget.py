@@ -233,6 +233,7 @@ class ChatBubble(QFrame):
         image_path: str = None,
         audio_path: str = None,
         message_index: int = -1,
+        theme_name: str = "dark",
         parent=None,
     ):
         """
@@ -244,9 +245,11 @@ class ChatBubble(QFrame):
             image_path: Optional path to image to display
             audio_path: Optional path to audio file to display with waveform
             parent: Parent widget
+            theme_name: App theme for user bubble color (dystopian = green)
         """
         super().__init__(parent)
         self.is_user = is_user
+        self.theme_name = theme_name or "dark"
         self.current_text = message
         self.image_path = image_path
         self.audio_path = audio_path
@@ -381,20 +384,21 @@ class ChatBubble(QFrame):
 
         # Style based on user/AI
         if self.is_user:
+            user_bg = "#8FBC8F" if self.theme_name == "dystopian" else "#4A9EFF"
             self.setStyleSheet(
-                """
-                QFrame {
-                    background: #4A9EFF;
+                f"""
+                QFrame {{
+                    background: {user_bg};
                     border-radius: 12px;
                     margin: 4px 60px 4px 4px;
-                }
-                QTextEdit {
+                }}
+                QTextEdit {{
                     color: white;
                     font-size: 14px;
                     padding: 4px 4px 8px 4px;
                     background: transparent;
                     border: none;
-                }
+                }}
             """
             )
         else:
@@ -425,9 +429,10 @@ class ChatBubble(QFrame):
         shadow.setYOffset(2)
         # Different shadow colors for user vs AI bubbles
         if self.is_user:
-            shadow.setColor(
-                QColor(74, 158, 255, 100)
-            )  # Blue shadow for user (semi-transparent)
+            if self.theme_name == "dystopian":
+                shadow.setColor(QColor(143, 188, 143, 100))
+            else:
+                shadow.setColor(QColor(74, 158, 255, 100))
         else:
             shadow.setColor(
                 QColor(0, 0, 0, 80)
@@ -1385,8 +1390,13 @@ class ChatWidget(QWidget):
 
     def add_welcome_message(self):
         """Add welcome message."""
+        theme = (
+            self.config_manager.get("ui.theme", "dark") if self.config_manager else "dark"
+        )
         welcome = ChatBubble(
-            "Welcome to locAI! Select a model above and start chatting.", is_user=False
+            "Welcome to locAI! Select a model above and start chatting.",
+            is_user=False,
+            theme_name=theme,
         )
         # Connect bubble signals to widget signals
         welcome.text_selected_for_tts.connect(self.text_selected_for_tts.emit)
@@ -1402,11 +1412,15 @@ class ChatWidget(QWidget):
         """Add user message to chat."""
         # If message is empty but image exists, show image-only message
         display_message = message if message else "📷 Image"
+        theme = (
+            self.config_manager.get("ui.theme", "dark") if self.config_manager else "dark"
+        )
         bubble = ChatBubble(
             display_message,
             is_user=True,
             image_path=image_path,
             message_index=message_index,
+            theme_name=theme,
         )
         # Connect bubble signals to widget signals
         bubble.text_selected_for_tts.connect(self.text_selected_for_tts.emit)
@@ -1455,7 +1469,14 @@ class ChatWidget(QWidget):
                 self.typing_indicator.deleteLater()
                 self.typing_indicator = None
 
-            self.current_ai_bubble = ChatBubble("", is_user=False, message_index=-1)
+            theme = (
+                self.config_manager.get("ui.theme", "dark")
+                if self.config_manager
+                else "dark"
+            )
+            self.current_ai_bubble = ChatBubble(
+                "", is_user=False, message_index=-1, theme_name=theme
+            )
             # Connect bubble signals to widget signals
             self.current_ai_bubble.text_selected_for_tts.connect(
                 self.text_selected_for_tts.emit
@@ -1491,7 +1512,14 @@ class ChatWidget(QWidget):
                 self.messages_layout.removeWidget(self.typing_indicator)
                 self.typing_indicator.deleteLater()
                 self.typing_indicator = None
-            self.current_ai_bubble = ChatBubble("", is_user=False, message_index=-1)
+            theme = (
+                self.config_manager.get("ui.theme", "dark")
+                if self.config_manager
+                else "dark"
+            )
+            self.current_ai_bubble = ChatBubble(
+                "", is_user=False, message_index=-1, theme_name=theme
+            )
             self.current_ai_bubble.text_selected_for_tts.connect(
                 self.text_selected_for_tts.emit
             )
@@ -1856,7 +1884,21 @@ class ChatWidget(QWidget):
             if self.seed_lock_btn.isVisible():
                 self.update_seed_lock_button()
         else:
-            # Chat mode - default blue theme (explicitly reset to match theme)
+            # Chat mode - blue theme (dark/light) or gray+green (dystopian)
+            theme = (
+                self.config_manager.get("ui.theme", "dark")
+                if self.config_manager
+                else "dark"
+            )
+            if theme == "dystopian":
+                btn_bg, btn_hover, btn_press = "#3D4349", "#484F58", "#4A5056"
+                input_focus = "#8FBC8F"
+                input_bg, input_border = "#161B22", "#30363D"
+            else:
+                btn_bg, btn_hover, btn_press = "#4A9EFF", "#3B82E0", "#2F6FC7"
+                input_focus = "#4A9EFF"
+                input_bg, input_border = "#2D2D2D", "#404040"
+
             self.input_frame.setStyleSheet(
                 """
                 QFrame {
@@ -1865,94 +1907,50 @@ class ChatWidget(QWidget):
                 }
             """
             )
-            # Reset input field to default theme style
             self.input_field.setStyleSheet(
-                """
-                QTextEdit {
-                    background: #2D2D2D;
+                f"""
+                QTextEdit {{
+                    background: {input_bg};
                     color: #E0E0E0;
-                    border: 1px solid #404040;
+                    border: 1px solid {input_border};
                     border-radius: 10px;
                     padding: 8px 12px;
                     font-size: 14px;
-                }
-                QTextEdit:focus {
-                    border: 2px solid #4A9EFF;
-                }
+                }}
+                QTextEdit:focus {{
+                    border: 2px solid {input_focus};
+                }}
             """
             )
-            # Reset mode button to default theme style (chat mode)
-            # Use blue theme with slightly darker hover, not global gray.
-            self.image_mode_btn.setStyleSheet(
-                """
-                QPushButton {
-                    background-color: #4A9EFF;
+            btn_style = f"""
+                QPushButton {{
+                    background-color: {btn_bg};
                     color: white;
                     border: none;
                     border-radius: 10px;
-                }
-                QPushButton:hover {
-                    background-color: #3B82E0;
-                }
-                QPushButton:pressed {
-                    background-color: #2F6FC7;
-                }
+                }}
+                QPushButton:hover {{
+                    background-color: {btn_hover};
+                }}
+                QPushButton:pressed {{
+                    background-color: {btn_press};
+                }}
             """
-            )
-            # Reset Send button to default blue theme style
+            self.image_mode_btn.setStyleSheet(btn_style)
             self.send_btn.setStyleSheet(
-                """
+                btn_style
+                + """
                 QPushButton {
-                    background-color: #4A9EFF;
-                    color: white;
-                    border: none;
-                    border-radius: 10px;
                     padding: 8px 16px;
                     font-weight: 500;
                     font-size: 14px;
                 }
-                QPushButton:hover {
-                    background-color: #3B82E0;
-                }
-                QPushButton:pressed {
-                    background-color: #2F6FC7;
-                }
             """
             )
-            # Reset prompt button to default blue theme style
-            self.prompt_btn.setStyleSheet(
-                """
-                QPushButton {
-                    background-color: #4A9EFF;
-                    border: none;
-                    border-radius: 10px;
-                }
-                QPushButton:hover {
-                    background-color: #3B82E0;
-                }
-                QPushButton:pressed {
-                    background-color: #2F6FC7;
-                }
-            """
-            )
-            # Reset voice button to default blue theme style
-            self.voice_btn.setStyleSheet(
-                """
-                QPushButton {
-                    background-color: #4A9EFF;
-                    border: none;
-                    border-radius: 10px;
-                }
-                QPushButton:hover {
-                    background-color: #3B82E0;
-                }
-                QPushButton:pressed {
-                    background-color: #2F6FC7;
-                }
-            """
-            )
-            # Reset seed lock button (will be updated by update_seed_lock_button if visible)
-            # But since it's hidden in chat mode, we don't need to reset it
+            self.prompt_btn.setStyleSheet(btn_style)
+            self.voice_btn.setStyleSheet(btn_style)
+            if self.seed_lock_btn.isVisible():
+                self.update_seed_lock_button()
 
     def on_seed_lock_toggled(self, checked: bool):
         """Handle seed lock toggle."""
@@ -2060,6 +2058,10 @@ class ChatWidget(QWidget):
                     }
                 """
                 )
+
+    def refresh_theme(self):
+        """Reapply input area style (call when app theme changes)."""
+        self._update_input_area_style()
 
     def set_send_enabled(self, enabled: bool):
         """Enable or disable send button."""
@@ -2274,7 +2276,12 @@ class ChatWidget(QWidget):
 
         # Show image in chat immediately
         upload_msg = f"📁 Image uploaded: {os.path.basename(image_path)} ({img_info['width']}x{img_info['height']}, {img_info['file_size_mb']}MB)"
-        bubble = ChatBubble(upload_msg, is_user=True, image_path=image_path)
+        theme = (
+            self.config_manager.get("ui.theme", "dark") if self.config_manager else "dark"
+        )
+        bubble = ChatBubble(
+            upload_msg, is_user=True, image_path=image_path, theme_name=theme
+        )
         bubble.text_selected_for_tts.connect(self.text_selected_for_tts.emit)
         bubble.text_selected_for_image.connect(self.text_selected_for_image.emit)
         bubble.text_selected_for_audio.connect(self.text_selected_for_audio.emit)

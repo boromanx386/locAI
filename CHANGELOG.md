@@ -39,4 +39,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.0.4] - 2026-03-06
+
+### Changed
+- **Ollama model unload**: Use API `keep_alive=0` instead of subprocess `ollama stop`; full model name from `/api/ps`; torch cleanup after each unload; 0.5s delay for VRAM release; fallback to subprocess if API fails.
+- **GPU memory cleanup**: Replaced multiple gc/empty_cache loops (5x, 10x) with single calls in main_window, audio/video/image generators, TTS, ASR, clear_gpu_memory utility.
+- **ASR preload**: Direct `asr_engine.load_model()` in background thread instead of simulating mic click; main window uses shared engine from VoiceInputWidget; fixed settings reinit order.
+
+### Fixed
+- **QTimer UnboundLocalError** when tools were disabled: removed redundant local import that shadowed global QTimer.
+
+---
+
 ## [Unreleased]
+
+### Added
+- **Dystopian theme**: Cyberpunk/terminal aesthetic with monospace fonts (JetBrains Mono, Fira Code, Consolas), neon green text on dark background.
+- **CRT scanline overlay**: Optional horizontal scanline effect with vignette for retro CRT look (toggle in Settings → Appearance).
+- **Neural Filter panel**: Collapsible side panel showing raw model thinking stream in real-time (Settings → Appearance → Show Neural Filter panel).
+- **Settings → Appearance**: Theme (Original Dark, Original Light, Dystopian), CRT scanlines checkbox, Neural Filter visibility checkbox.
+
+### Changed
+- **Theme system**: Extended with dystopian palette and monospace font stack; config validates `dystopian` as valid theme.

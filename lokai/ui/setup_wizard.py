@@ -254,7 +254,9 @@ class ThemeSelectionPage(QWizardPage):
         layout.addWidget(info_label)
         
         self.theme_combo = QComboBox()
-        self.theme_combo.addItems(["dark", "light"])
+        self.theme_combo.addItem("Original Dark", "dark")
+        self.theme_combo.addItem("Original Light", "light")
+        self.theme_combo.addItem("Dystopian", "dystopian")
         layout.addWidget(self.theme_combo)
         
         self.registerField("theme", self.theme_combo, "currentText")
@@ -339,7 +341,9 @@ class SetupWizard(QWizard):
             
             theme = self.field("theme")
             if theme:
-                self.config_manager.set("ui.theme", theme)
+                theme_map = {"Original Dark": "dark", "Original Light": "light", "Dystopian": "dystopian"}
+                theme_value = theme_map.get(theme, "dark")
+                self.config_manager.set("ui.theme", theme_value)
             
             # Mark first run as complete
             self.config_manager.set_first_run_complete()

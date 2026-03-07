@@ -18,6 +18,21 @@ from lokai.ui.theme import Theme
 from lokai.ui.material_icons import MaterialIcons
 
 
+# Button colors for themes (blue for dark/light, gray for dystopian)
+_STATUS_BTN_STYLES = {
+    "blue": {
+        "bg": "#4A9EFF",
+        "hover": "#3B82E0",
+        "press": "#2F6FC7",
+    },
+    "gray": {
+        "bg": "#3D4349",
+        "hover": "#484F58",
+        "press": "#4A5056",
+    },
+}
+
+
 class StatusPanel(QFrame):
     """Panel showing Ollama status and model selection."""
 
@@ -41,6 +56,7 @@ class StatusPanel(QFrame):
         super().__init__()
         self.detector = detector
         self.client = client
+        self._button_style = "blue"
 
         self.init_ui()
         self.update_status()
@@ -102,22 +118,6 @@ class StatusPanel(QFrame):
         self.refresh_btn.setToolTip("Refresh model list")
         self.refresh_btn.setMaximumWidth(32)
         self.refresh_btn.setMaximumHeight(32)
-        # Match chat widget blue button theme (hover = slightly darker blue)
-        self.refresh_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #4A9EFF;
-                border: none;
-                border-radius: 10px;
-            }
-            QPushButton:hover {
-                background-color: #3B82E0;
-            }
-            QPushButton:pressed {
-                background-color: #2F6FC7;
-            }
-            """
-        )
         self.refresh_btn.clicked.connect(self._on_refresh_clicked)
         layout.addWidget(self.refresh_btn)
 
@@ -216,21 +216,6 @@ class StatusPanel(QFrame):
         self.tts_play_btn.setToolTip("Play TTS")
         self.tts_play_btn.setMaximumWidth(32)
         self.tts_play_btn.setMaximumHeight(32)
-        self.tts_play_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #4A9EFF;
-                border: none;
-                border-radius: 10px;
-            }
-            QPushButton:hover {
-                background-color: #3B82E0;
-            }
-            QPushButton:pressed {
-                background-color: #2F6FC7;
-            }
-            """
-        )
         self.tts_play_btn.clicked.connect(self.on_tts_play)
         layout.addWidget(self.tts_play_btn)
 
@@ -247,26 +232,40 @@ class StatusPanel(QFrame):
         self.tts_stop_btn.setMaximumWidth(32)
         self.tts_stop_btn.setMaximumHeight(32)
         self.tts_stop_btn.setEnabled(False)
-        self.tts_stop_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #4A9EFF;
-                border: none;
-                border-radius: 10px;
-            }
-            QPushButton:hover {
-                background-color: #3B82E0;
-            }
-            QPushButton:pressed {
-                background-color: #2F6FC7;
-            }
-            """
-        )
         self.tts_stop_btn.clicked.connect(self.on_tts_stop)
         layout.addWidget(self.tts_stop_btn)
 
         self.setLayout(layout)
         self.setFrameStyle(QFrame.Shape.StyledPanel)
+        self._apply_button_style()
+
+    def set_theme(self, theme_name: str):
+        """Update button colors for theme (dystopian = gray, else = blue)."""
+        self._button_style = "gray" if theme_name == "dystopian" else "blue"
+        self._apply_button_style()
+        self._update_tools_button_tooltip()
+
+    def _apply_button_style(self):
+        """Apply current button style to refresh, tts_play, tts_stop, and tools (when off)."""
+        s = _STATUS_BTN_STYLES[self._button_style]
+        sheet = f"""
+            QPushButton {{
+                background-color: {s["bg"]};
+                border: none;
+                border-radius: 10px;
+            }}
+            QPushButton:hover {{
+                background-color: {s["hover"]};
+            }}
+            QPushButton:pressed {{
+                background-color: {s["press"]};
+            }}
+        """
+        self.refresh_btn.setStyleSheet(sheet)
+        self.tts_play_btn.setStyleSheet(sheet)
+        self.tts_stop_btn.setStyleSheet(sheet)
+        if not self.tools_enabled:
+            self.tools_btn.setStyleSheet(sheet)
 
     def update_status(self):
         """Update Ollama status display (non-blocking)."""
@@ -398,22 +397,7 @@ class StatusPanel(QFrame):
             )
         else:
             self.tools_btn.setToolTip("Tools: disabled")
-            # Blue when tools are OFF (match other controls)
-            self.tools_btn.setStyleSheet(
-                """
-                QPushButton {
-                    background-color: #4A9EFF;
-                    border: none;
-                    border-radius: 10px;
-                }
-                QPushButton:hover {
-                    background-color: #3B82E0;
-                }
-                QPushButton:pressed {
-                    background-color: #2F6FC7;
-                }
-                """
-            )
+            self._apply_button_style()
 
     def refresh_models(self):
         """Refresh the list of available models (non-blocking)."""
