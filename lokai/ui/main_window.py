@@ -644,100 +644,53 @@ class MainWindow(QMainWindow):
             self.tts_engine = None
 
     def _init_asr_engine(self):
-        """Initialize ASR engine if enabled."""
+        """Wire ASR engine reference and optionally preload. Engine is owned by VoiceInputWidget."""
         try:
             asr_enabled = self.config_manager.get("asr.enabled", False)
             if not asr_enabled:
                 print("ASR disabled in config")
-                return
-
-            from lokai.core.asr_engine import ASREngine
-
-            storage_path = get_asr_storage_path(self.config_manager)
-            # Get device from config (default to CPU)
-            device = self.config_manager.get("asr.device", "cpu")
-            self.asr_engine = ASREngine(
-                str(storage_path) if storage_path else None, device=device
-            )
-
-            if not self.asr_engine.is_available():
-                print("ASR engine not available (NeMo not installed)")
                 self.asr_engine = None
                 return
 
-            print("ASR engine initialized")
-
-            # Preload ASR model by starting and stopping voice input
-            # This loads the model in background, avoiding 10-15 second delay on first use
-            # Start immediately with minimal delay to ensure chat_widget is ready
-            QTimer.singleShot(100, self._preload_asr_by_start_stop)
-
+            # Use the engine from VoiceInputWidget (single source of truth)
+            if (
+                hasattr(self, "chat_widget")
+                and self.chat_widget
+                and hasattr(self.chat_widget, "voice_input_widget")
+                and self.chat_widget.voice_input_widget
+                and self.chat_widget.voice_input_widget.asr_engine
+            ):
+                self.asr_engine = self.chat_widget.voice_input_widget.asr_engine
+                print("ASR engine initialized (shared with voice input)")
+                QTimer.singleShot(100, self._preload_asr_model)
+            else:
+                self.asr_engine = None
+                print("ASR engine not available (voice input not ready or NeMo missing)")
         except Exception as e:
             print(f"Error initializing ASR engine: {e}")
             import traceback
-
             traceback.print_exc()
             self.asr_engine = None
 
-    def _preload_asr_by_start_stop(self):
-        """Preload ASR model by starting and stopping voice input (like user clicked)."""
-        try:
-            # Check if voice input widget is available
-            if not hasattr(self, "chat_widget") or self.chat_widget is None:
-                # Retry after short delay if chat_widget not ready yet
-                QTimer.singleShot(200, self._preload_asr_by_start_stop)
-                return
+    def _preload_asr_model(self):
+        """Load ASR model in background thread to avoid delay on first mic use."""
+        if not self.asr_engine:
+            return
 
-            if (
-                not hasattr(self.chat_widget, "voice_input_widget")
-                or self.chat_widget.voice_input_widget is None
-            ):
-                # Retry after short delay if voice_input_widget not ready yet
-                QTimer.singleShot(200, self._preload_asr_by_start_stop)
-                return
-
-            voice_widget = self.chat_widget.voice_input_widget
-
-            # Check if asr_worker is available
-            if (
-                not hasattr(voice_widget, "asr_worker")
-                or voice_widget.asr_worker is None
-            ):
-                # Retry after short delay if asr_worker not ready yet
-                QTimer.singleShot(200, self._preload_asr_by_start_stop)
-                return
-
-            # Connect to listening_started signal to know when model is loaded
-            def on_listening_started():
-                # Model is loaded, now stop voice input
-                QTimer.singleShot(
-                    100, lambda: self._stop_voice_input_for_preload(voice_widget)
+        def _do_load():
+            try:
+                model = self.config_manager.get(
+                    "asr.model", "nvidia/nemotron-speech-streaming-en-0.6b"
                 )
-                try:
-                    voice_widget.asr_worker.listening_started.disconnect(
-                        on_listening_started
-                    )
-                except:
-                    pass  # Already disconnected
+                chunk_ms = self.config_manager.get("asr.chunk_size_ms", 560)
+                self.asr_engine.load_model(model, chunk_ms)
+                print("[ASR Preload] Model loaded and ready")
+            except Exception as e:
+                print(f"[ASR Preload] Error: {e}")
 
-            voice_widget.asr_worker.listening_started.connect(on_listening_started)
-
-            # Start voice input (this will load the model in background)
-            print("[ASR Preload] Starting voice input to load model...")
-            voice_widget.start_voice_input()
-
-        except Exception as e:
-            print(f"[ASR Preload] Error preloading ASR: {e}")
-            # Retry once more after delay
-            QTimer.singleShot(500, self._preload_asr_by_start_stop)
-
-    def _stop_voice_input_for_preload(self, voice_widget):
-        """Stop voice input after preload."""
-        try:
-            voice_widget.stop_voice_input()
-            print("[ASR Preload] Voice input stopped, model loaded and ready")
-        except Exception as e:
-            print(f"[ASR Preload] Error stopping voice input: {e}")
+        import threading
+        t = threading.Thread(target=_do_load, daemon=True)
+        t.start()
 
     def _init_global_shortcuts(self):
         """Initialize global keyboard shortcuts for system-wide text selection."""
@@ -1784,13 +1737,13 @@ class MainWindow(QMainWindow):
                 "storage_path": self.config_manager.get("asr.storage_path") or "",
             }
             if asr_before != asr_after:
-                self._init_asr_engine()
                 if (
                     hasattr(self.chat_widget, "voice_input_widget")
                     and self.chat_widget.voice_input_widget is not None
                     and hasattr(self.chat_widget.voice_input_widget, "reinit_asr")
                 ):
                     self.chat_widget.voice_input_widget.reinit_asr()
+                self._init_asr_engine()
 
             # Status panel voices are already updated in _init_tts_engine()
             # Voice is already set in _init_tts_engine(), no need to update again here
